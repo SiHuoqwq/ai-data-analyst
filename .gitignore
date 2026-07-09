@@ -7,3 +7,4 @@ storage/charts/*
 !storage/charts/.gitkeep
 app.db
 .venv/
+.superpowers/
