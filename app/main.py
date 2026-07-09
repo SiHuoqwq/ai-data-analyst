@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 from app.db.database import init_db
 from app.api.files import router as files_router
 
@@ -11,6 +12,8 @@ app.include_router(chat_router)
 
 from app.api.report import router as report_router
 app.include_router(report_router)
+
+app.mount("/storage/charts", StaticFiles(directory="storage/charts"), name="charts")
 
 
 @app.on_event("startup")
