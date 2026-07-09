@@ -1,18 +1,18 @@
 import type { AppStage, FileDetail } from '../../types';
+import StageIndicator from '../context/StageIndicator';
+import DataOverview from '../context/DataOverview';
+import TaskProgress from '../context/TaskProgress';
+import ResultsView from '../context/ResultsView';
 
 interface Props {
   activeFile: FileDetail | null;
   stage: AppStage;
-  toolCalls: { name: string; args: Record<string, unknown>; status: string }[];
+  toolCalls: { name: string; args: Record<string, unknown>; status: 'pending' | 'running' | 'done' }[];
   chartPaths: string[];
 }
 
-export default function ContextPanel({ stage }: Props) {
-  const stages = [
-    { label: '上传', active: stage === 'empty' || stage === 'upload' || stage === 'ready' },
-    { label: '分析', active: stage === 'analyzing' },
-    { label: '结果', active: stage === 'complete' },
-  ];
+export default function ContextPanel({ activeFile, stage, toolCalls, chartPaths }: Props) {
+  const hasFile = activeFile !== null;
 
   return (
     <aside
@@ -23,24 +23,26 @@ export default function ContextPanel({ stage }: Props) {
         上下文面板
       </h2>
 
-      <div className="flex gap-1.5 text-[10px]">
-        {stages.map((s) => (
-          <span
-            key={s.label}
-            className="px-2 py-0.5 rounded-full font-medium"
-            style={{
-              background: s.active ? '#2563eb' : '#1a2744',
-              color: s.active ? 'white' : '#64748b',
-            }}
-          >
-            {s.label}
-          </span>
-        ))}
-      </div>
+      <StageIndicator stage={stage} />
 
-      <p className="text-xs mt-8 text-center" style={{ color: '#64748b' }}>
-        上传或选择一个数据文件
-      </p>
+      {!hasFile ? (
+        <p className="text-xs mt-8 text-center" style={{ color: '#64748b' }}>
+          上传或选择一个数据文件
+        </p>
+      ) : (
+        <>
+          <DataOverview file={activeFile} />
+          {(stage === 'analyzing' || stage === 'complete') && (
+            <TaskProgress toolCalls={toolCalls} />
+          )}
+          {stage === 'complete' && (
+            <ResultsView
+              chartPaths={chartPaths}
+              activeFileId={activeFile?.id ?? null}
+            />
+          )}
+        </>
+      )}
     </aside>
   );
 }

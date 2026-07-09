@@ -1,6 +1,8 @@
 import { useEffect } from 'react';
 import type { AppStage, FileDetail, FileListItem } from '../../types';
 import { listFiles, getFileDetail } from '../../api/files';
+import FileUploadZone from '../files/FileUploadZone';
+import FileHistoryList from '../files/FileHistoryList';
 
 interface Props {
   files: FileListItem[];
@@ -33,6 +35,12 @@ export default function LeftSidebar({ files, setFiles, activeFile, setActiveFile
     }
   };
 
+  const handleUploaded = (detail: FileDetail) => {
+    setActiveFile(detail);
+    setStage('ready');
+    refreshFiles();
+  };
+
   return (
     <aside
       className="w-[18%] min-w-[200px] flex-shrink-0 flex flex-col gap-3 p-3 border-r overflow-y-auto"
@@ -42,60 +50,13 @@ export default function LeftSidebar({ files, setFiles, activeFile, setActiveFile
         数据文件
       </h2>
 
-      {/* Upload zone — will be extracted to FileUploadZone in Phase 2 */}
-      <div
-        className="border border-dashed rounded-lg p-4 text-center cursor-pointer transition-colors"
-        style={{ borderColor: '#1e293b' }}
-        onClick={() => {
-          const input = document.createElement('input');
-          input.type = 'file';
-          input.accept = '.csv,.xlsx,.xls';
-          input.onchange = async () => {
-            const file = input.files?.[0];
-            if (!file) return;
-            const { uploadFile } = await import('../../api/files');
-            try {
-              const detail = await uploadFile(file);
-              setActiveFile(detail);
-              setStage('ready');
-              refreshFiles();
-            } catch (e) {
-              console.error('Upload failed:', e);
-            }
-          };
-          input.click();
-        }}
-      >
-        <span className="text-lg" style={{ color: '#60a5fa' }}>+</span>
-        <p className="text-xs mt-1" style={{ color: '#94a3b8' }}>上传 CSV / Excel</p>
-      </div>
+      <FileUploadZone onUploaded={handleUploaded} />
 
-      {/* File history list */}
-      <div className="flex flex-col gap-1">
-        <p className="text-[10px] font-medium uppercase tracking-wider px-1" style={{ color: '#64748b' }}>
-          历史文件
-        </p>
-        {files.map((f) => (
-          <div
-            key={f.id}
-            onClick={() => handleSelect(f.id)}
-            className="flex items-start gap-2 p-2 rounded-lg cursor-pointer transition-colors text-xs"
-            style={{
-              background: f.id === activeFile?.id ? '#1a2744' : 'transparent',
-              borderLeft: f.id === activeFile?.id ? '2px solid #2563eb' : '2px solid transparent',
-              color: f.id === activeFile?.id ? '#e2e8f0' : '#94a3b8',
-            }}
-          >
-            <span className="flex-shrink-0 mt-0.5">📄</span>
-            <div className="min-w-0">
-              <p className="truncate">{f.filename}</p>
-              <p className="text-[10px]" style={{ color: '#64748b' }}>
-                {f.col_count}列 · {f.row_count}行
-              </p>
-            </div>
-          </div>
-        ))}
-      </div>
+      <FileHistoryList
+        files={files}
+        activeFileId={activeFile?.id ?? null}
+        onSelect={handleSelect}
+      />
     </aside>
   );
 }
