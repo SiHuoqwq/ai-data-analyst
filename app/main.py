@@ -9,6 +9,9 @@ app.include_router(files_router)
 from app.api.chat import router as chat_router
 app.include_router(chat_router)
 
+from app.api.report import router as report_router
+app.include_router(report_router)
+
 
 @app.on_event("startup")
 def on_startup():
