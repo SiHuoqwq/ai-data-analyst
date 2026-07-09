@@ -100,13 +100,18 @@ export default function ChatPanel({
             case 'done': {
               conversationIdRef.current = event.conversation_id;
 
+              // Use chart paths from backend if provided, normalize "./" prefix
+              const backendChartPaths: string[] = (event.chart_paths ?? []).map(
+                (p) => p.replace(/^\.\//, '/')
+              );
+
               // Capture final values for parent state update
               let finalToolCalls: {
                 name: string;
                 args: Record<string, unknown>;
                 status: 'done';
               }[] = [];
-              let finalChartPaths: string[] = [];
+              let finalChartPaths: string[] = backendChartPaths;
 
               setMessages((prev) => {
                 const copy = [...prev];
@@ -122,8 +127,9 @@ export default function ChatPanel({
                   finalToolCalls = last.toolCalls;
                 }
 
-                // Extract chart paths from content
-                last.chartPaths = extractChartPaths(last.content);
+                // Merge content-extracted paths with backend-provided paths
+                const contentChartPaths = extractChartPaths(last.content);
+                last.chartPaths = [...new Set([...contentChartPaths, ...backendChartPaths])];
                 finalChartPaths = last.chartPaths;
 
                 copy[lastIdx] = last;

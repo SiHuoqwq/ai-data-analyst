@@ -50,6 +50,7 @@ export interface SSEToolResultEvent {
 export interface SSEDoneEvent {
   type: 'done';
   conversation_id: string;
+  chart_paths?: string[];
 }
 
 export type SSEEvent = SSEToolEvent | SSETextEvent | SSEToolResultEvent | SSEDoneEvent;
