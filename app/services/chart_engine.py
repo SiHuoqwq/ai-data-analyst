@@ -2,6 +2,10 @@ import uuid
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+
+plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'Arial Unicode MS', 'WenQuanYi Micro Hei']
+plt.rcParams['axes.unicode_minus'] = False
+
 import seaborn as sns
 import pandas as pd
 from app.config import settings

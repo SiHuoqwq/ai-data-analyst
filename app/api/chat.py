@@ -56,6 +56,7 @@ async def chat_stream(req: ChatRequest):
                             chart_name = os.path.basename(chart_path)
                             save_chart(str(uuid.uuid4()), "auto", chart_name, chart_path)
                             chart_ids.append(chart_path)
+                            yield f"data: {json_module.dumps({'type': 'chart', 'path': chart_path}, ensure_ascii=False)}\n\n"
 
         yield f"data: {json_module.dumps({'type': 'done', 'conversation_id': conv_id, 'chart_paths': chart_ids}, ensure_ascii=False)}\n\n"
 

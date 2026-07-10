@@ -146,9 +146,17 @@ export default function ChatPanel({
               break;
             }
 
-            case 'tool_result': {
-              // Tool result provides context for the model; append as invisible data
-              // The final text response already summarizes the tool output
+            case 'chart': {
+              const normalized = event.path.replace(/^\.\//, '/');
+              setMessages((prev) => {
+                const copy = [...prev];
+                const lastIdx = copy.length - 1;
+                const last = { ...copy[lastIdx] };
+                last.chartPaths = [...(last.chartPaths || []), normalized];
+                copy[lastIdx] = last;
+                return copy;
+              });
+              updateParentChartPaths((prev) => [...prev, normalized]);
               break;
             }
           }

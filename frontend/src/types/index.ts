@@ -47,12 +47,17 @@ export interface SSEToolResultEvent {
   content: string;
 }
 
+export interface SSEChartEvent {
+  type: 'chart';
+  path: string;
+}
+
 export interface SSEDoneEvent {
   type: 'done';
   conversation_id: string;
   chart_paths?: string[];
 }
 
-export type SSEEvent = SSEToolEvent | SSETextEvent | SSEToolResultEvent | SSEDoneEvent;
+export type SSEEvent = SSEToolEvent | SSETextEvent | SSEToolResultEvent | SSEChartEvent | SSEDoneEvent;
 
 export type AppStage = 'empty' | 'upload' | 'ready' | 'analyzing' | 'complete';
