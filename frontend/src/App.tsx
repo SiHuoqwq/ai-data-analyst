@@ -1,9 +1,9 @@
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import TopBar from './components/layout/TopBar';
 import LeftSidebar from './components/layout/LeftSidebar';
 import ChatPanel from './components/layout/ChatPanel';
 import ContextPanel from './components/layout/ContextPanel';
-import type { AppStage, FileDetail, FileListItem } from './types';
+import type { AppStage, FileDetail, FileListItem, ConversationItem } from './types';
 
 function App() {
   const [files, setFiles] = useState<FileListItem[]>([]);
@@ -13,6 +13,13 @@ function App() {
     { name: string; args: Record<string, unknown>; status: 'pending' | 'running' | 'done' }[]
   >([]);
   const [chartPaths, setChartPaths] = useState<string[]>([]);
+  const [conversations, setConversations] = useState<ConversationItem[]>([]);
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
+  const [conversationsDirty, setConversationsDirty] = useState(0);
+
+  const markConversationsDirty = useCallback(() => {
+    setConversationsDirty((n) => n + 1);
+  }, []);
 
   return (
     <div className="h-screen flex flex-col" style={{ background: '#0f172a' }}>
@@ -26,6 +33,11 @@ function App() {
           setStage={setStage}
           setToolCalls={setToolCalls}
           setChartPaths={setChartPaths}
+          conversations={conversations}
+          setConversations={setConversations}
+          activeConversationId={activeConversationId}
+          setActiveConversationId={setActiveConversationId}
+          conversationsDirty={conversationsDirty}
         />
         <ChatPanel
           activeFile={activeFile}
@@ -33,6 +45,9 @@ function App() {
           setStage={setStage}
           setToolCalls={setToolCalls}
           setChartPaths={setChartPaths}
+          activeConversationId={activeConversationId}
+          setActiveConversationId={setActiveConversationId}
+          markConversationsDirty={markConversationsDirty}
         />
         <ContextPanel
           activeFile={activeFile}

@@ -24,3 +24,7 @@ export async function getFilePreview(fileId: string, rows = 20): Promise<FilePre
   });
   return data;
 }
+
+export async function deleteFile(fileId: string): Promise<void> {
+  await apiClient.delete(`/files/${fileId}`);
+}

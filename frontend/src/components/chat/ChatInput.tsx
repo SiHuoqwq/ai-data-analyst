@@ -44,7 +44,7 @@ export default function ChatInput({ onSend, disabled }: Props) {
   const hasText = value.trim().length > 0;
 
   return (
-    <div className="px-4 py-3 border-t" style={{ borderColor: '#1e293b' }}>
+    <div className="px-4 py-3 pb-6 border-t" style={{ borderColor: '#1e293b' }}>
       <div
         className="flex items-end gap-2 rounded-xl px-3 py-2"
         style={{ background: '#1a2744', border: '1px solid #1e293b' }}

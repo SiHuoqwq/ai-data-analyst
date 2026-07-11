@@ -61,3 +61,25 @@ export interface SSEDoneEvent {
 export type SSEEvent = SSEToolEvent | SSETextEvent | SSEToolResultEvent | SSEChartEvent | SSEDoneEvent;
 
 export type AppStage = 'empty' | 'upload' | 'ready' | 'analyzing' | 'complete';
+
+export interface MessageItem {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  tool_calls: { name: string; args: Record<string, unknown> }[] | null;
+  chart_ids: string[] | null;
+  created_at: string;
+}
+
+export interface ConversationItem {
+  id: string;
+  file_id: string;
+  title: string;
+  mode: string;
+  created_at: string;
+  message_count: number;
+}
+
+export interface ConversationDetail extends ConversationItem {
+  messages: MessageItem[];
+}

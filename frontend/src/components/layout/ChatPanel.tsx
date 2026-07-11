@@ -1,6 +1,7 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import type { AppStage, FileDetail } from '../../types';
 import { streamChat } from '../../api/chat';
+import { getConversation } from '../../api/conversations';
 import MessageList, { type Message } from '../chat/MessageList';
 import ChatInput from '../chat/ChatInput';
 
@@ -18,6 +19,9 @@ interface Props {
     calls: { name: string; args: Record<string, unknown>; status: 'pending' | 'running' | 'done' }[]
   ) => void;
   setChartPaths: (paths: string[]) => void;
+  activeConversationId: string | null;
+  setActiveConversationId: (id: string | null) => void;
+  markConversationsDirty: () => void;
 }
 
 export default function ChatPanel({
@@ -26,10 +30,36 @@ export default function ChatPanel({
   setStage,
   setToolCalls: updateParentToolCalls,
   setChartPaths: updateParentChartPaths,
+  activeConversationId,
+  setActiveConversationId,
+  markConversationsDirty,
 }: Props) {
   const [messages, setMessages] = useState<Message[]>([]);
-  const conversationIdRef = useRef<string | null>(null);
   const isStreaming = stage === 'analyzing';
+
+  // Load conversation messages when activeConversationId changes
+  useEffect(() => {
+    if (!activeConversationId) {
+      setMessages([]);
+      return;
+    }
+    getConversation(activeConversationId)
+      .then((conv) => {
+        const msgs: Message[] = conv.messages.map((m) => ({
+          role: m.role as 'user' | 'assistant',
+          content: m.content,
+          toolCalls: (m.tool_calls ?? []).map((tc) => ({
+            name: tc.name,
+            args: tc.args,
+            status: 'done' as const,
+          })),
+          chartPaths: m.chart_ids ?? [],
+        }));
+        setMessages(msgs);
+        setStage('complete');
+      })
+      .catch(console.error);
+  }, [activeConversationId, setStage]);
 
   const extractChartPaths = useCallback((text: string): string[] => {
     const matches = text.match(/\/storage\/charts\/[a-f0-9-]+\.png/g);
@@ -50,13 +80,12 @@ export default function ChatPanel({
         const generator = streamChat({
           file_id: activeFile.id,
           message: text,
-          conversation_id: conversationIdRef.current,
+          conversation_id: activeConversationId,
         });
 
         for await (const event of generator) {
           switch (event.type) {
             case 'tool': {
-              // Parse the JSON array of tool calls
               let parsed: ToolCall[];
               try {
                 parsed = JSON.parse(event.content) as ToolCall[];
@@ -78,7 +107,6 @@ export default function ChatPanel({
                 return copy;
               });
 
-              // Update parent state for ContextPanel
               updateParentToolCalls(
                 parsed.map((tc) => ({ ...tc, status: 'running' as const }))
               );
@@ -98,14 +126,13 @@ export default function ChatPanel({
             }
 
             case 'done': {
-              conversationIdRef.current = event.conversation_id;
+              setActiveConversationId(event.conversation_id);
+              markConversationsDirty();
 
-              // Use chart paths from backend if provided, normalize "./" prefix
               const backendChartPaths: string[] = (event.chart_paths ?? []).map(
                 (p) => p.replace(/^\.\//, '/')
               );
 
-              // Capture final values for parent state update
               let finalToolCalls: {
                 name: string;
                 args: Record<string, unknown>;
@@ -118,7 +145,6 @@ export default function ChatPanel({
                 const lastIdx = copy.length - 1;
                 const last = { ...copy[lastIdx] };
 
-                // Mark all tool calls as done
                 if (last.toolCalls) {
                   last.toolCalls = last.toolCalls.map((tc) => ({
                     ...tc,
@@ -127,7 +153,6 @@ export default function ChatPanel({
                   finalToolCalls = last.toolCalls;
                 }
 
-                // Merge content-extracted paths with backend-provided paths
                 const contentChartPaths = extractChartPaths(last.content);
                 last.chartPaths = [...new Set([...contentChartPaths, ...backendChartPaths])];
                 finalChartPaths = last.chartPaths;
@@ -136,7 +161,6 @@ export default function ChatPanel({
                 return copy;
               });
 
-              // Update parent state for ContextPanel
               if (finalToolCalls.length > 0) {
                 updateParentToolCalls(finalToolCalls);
               }
@@ -173,7 +197,6 @@ export default function ChatPanel({
           } else {
             last.content += `\n\n请求失败: ${errorMsg}`;
           }
-          // Mark any running tool calls as done on error
           if (last.toolCalls) {
             last.toolCalls = last.toolCalls.map((tc) => ({
               ...tc,
@@ -187,7 +210,7 @@ export default function ChatPanel({
         setStage('ready');
       }
     },
-    [activeFile, setStage, extractChartPaths, updateParentToolCalls, updateParentChartPaths]
+    [activeFile, activeConversationId, setActiveConversationId, markConversationsDirty, setStage, extractChartPaths, updateParentToolCalls, updateParentChartPaths]
   );
 
   // Empty state when no messages yet

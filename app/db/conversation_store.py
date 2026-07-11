@@ -44,3 +44,36 @@ def get_conversation(conv_id: str) -> ConversationModel | None:
     conv = db.query(ConversationModel).filter(ConversationModel.id == conv_id).first()
     db.close()
     return conv
+
+
+def get_conversations_for_file(file_id: str) -> list[ConversationModel]:
+    db = SessionLocal()
+    convs = (
+        db.query(ConversationModel)
+        .filter(ConversationModel.file_id == file_id)
+        .order_by(ConversationModel.created_at.desc())
+        .all()
+    )
+    db.close()
+    return convs
+
+
+def get_conversation_with_messages(conv_id: str) -> ConversationModel | None:
+    from sqlalchemy.orm import joinedload
+
+    db = SessionLocal()
+    conv = (
+        db.query(ConversationModel)
+        .options(joinedload(ConversationModel.messages))
+        .filter(ConversationModel.id == conv_id)
+        .first()
+    )
+    db.close()
+    return conv
+
+
+def count_messages(conv_id: str) -> int:
+    db = SessionLocal()
+    count = db.query(MessageModel).filter(MessageModel.conv_id == conv_id).count()
+    db.close()
+    return count

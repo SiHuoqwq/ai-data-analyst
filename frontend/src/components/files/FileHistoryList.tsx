@@ -5,9 +5,10 @@ interface Props {
   files: FileListItem[];
   activeFileId: string | null;
   onSelect: (fileId: string) => void;
+  onDelete: (fileId: string) => void;
 }
 
-export default function FileHistoryList({ files, activeFileId, onSelect }: Props) {
+export default function FileHistoryList({ files, activeFileId, onSelect, onDelete }: Props) {
   return (
     <div className="flex flex-col gap-1">
       <p
@@ -22,6 +23,7 @@ export default function FileHistoryList({ files, activeFileId, onSelect }: Props
           file={f}
           isActive={f.id === activeFileId}
           onClick={() => onSelect(f.id)}
+          onDelete={() => onDelete(f.id)}
         />
       ))}
     </div>

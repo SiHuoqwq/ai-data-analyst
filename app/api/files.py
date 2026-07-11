@@ -96,3 +96,21 @@ def preview_file(file_id: str, rows: int = 20):
         rows=preview_df.fillna("").values.tolist(),
         total_rows=len(df),
     )
+
+
+@router.delete("/{file_id}")
+def delete_file(file_id: str):
+    import os
+    db = SessionLocal()
+    record = db.query(FileModel).filter(FileModel.id == file_id).first()
+    if not record:
+        db.close()
+        raise HTTPException(404, "文件不存在")
+
+    if os.path.exists(record.filepath):
+        os.remove(record.filepath)
+
+    db.delete(record)
+    db.commit()
+    db.close()
+    return {"ok": True}

@@ -13,6 +13,9 @@ app.include_router(chat_router)
 from app.api.report import router as report_router
 app.include_router(report_router)
 
+from app.api.conversations import router as conversations_router
+app.include_router(conversations_router)
+
 app.mount("/storage/charts", StaticFiles(directory="storage/charts"), name="charts")
 
 
