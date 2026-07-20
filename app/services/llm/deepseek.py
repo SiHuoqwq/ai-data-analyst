@@ -25,6 +25,8 @@ class DeepSeekLLM(BaseLLM):
         return self._client
 
     async def chat(self, messages: list[dict], tools: list[dict] | None = None) -> dict:
+        if not self.api_key:
+            raise RuntimeError("DEEPSEEK_API_KEY 未配置")
         client = await self._get_client()
         body = {"model": self._model, "messages": messages, "temperature": 0.7}
         if tools:
@@ -49,6 +51,8 @@ class DeepSeekLLM(BaseLLM):
         return result
 
     async def chat_stream(self, messages: list[dict]):
+        if not self.api_key:
+            raise RuntimeError("DEEPSEEK_API_KEY 未配置")
         client = await self._get_client()
         body = {"model": self._model, "messages": messages, "temperature": 0.7, "stream": True}
 

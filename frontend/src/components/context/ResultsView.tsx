@@ -4,16 +4,17 @@ import { generateReport } from '../../api/report';
 interface Props {
   chartPaths: string[];
   activeFileId: string | null;
+  activeConversationId: string | null;
 }
 
-export default function ResultsView({ chartPaths, activeFileId }: Props) {
+export default function ResultsView({ chartPaths, activeFileId, activeConversationId }: Props) {
   const [generating, setGenerating] = useState(false);
 
   const handleGenerateReport = async () => {
-    if (!activeFileId || generating) return;
+    if (!activeFileId || !activeConversationId || generating) return;
     setGenerating(true);
     try {
-      const report = await generateReport(activeFileId);
+      const report = await generateReport(activeFileId, activeConversationId);
       const blob = new Blob([report], { type: 'text/plain;charset=utf-8' });
       const url = URL.createObjectURL(blob);
       window.open(url, '_blank');
@@ -53,12 +54,12 @@ export default function ResultsView({ chartPaths, activeFileId }: Props) {
       {/* Generate report button */}
       <button
         onClick={handleGenerateReport}
-        disabled={!activeFileId || generating}
+        disabled={!activeFileId || !activeConversationId || generating}
         className="w-full py-2 rounded-lg text-xs font-medium transition-opacity"
         style={{
           background: '#2563eb',
           color: 'white',
-          opacity: !activeFileId || generating ? 0.5 : 1,
+          opacity: !activeFileId || !activeConversationId || generating ? 0.5 : 1,
         }}
       >
         {generating ? '生成中...' : '生成分析报告'}

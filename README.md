@@ -1,11 +1,11 @@
 # AI Data Analyst
 
-AI 数据分析助手 — 上传 CSV/Excel 数据，通过自然语言与 AI Agent 交互，自动完成**统计分析、图表生成和报告输出**。
+AI 数据分析助手 — 上传 CSV/XLSX 数据，通过自然语言与 AI Agent 交互，自动完成**统计分析、图表生成和报告输出**。
 
 <p align="center">
   <img src="https://img.shields.io/badge/Python-3.10+-blue?logo=python" alt="Python">
   <img src="https://img.shields.io/badge/FastAPI-0.115-teal?logo=fastapi" alt="FastAPI">
-  <img src="https://img.shields.io/badge/React-18-61dafb?logo=react" alt="React">
+  <img src="https://img.shields.io/badge/React-19-61dafb?logo=react" alt="React">
   <img src="https://img.shields.io/badge/TypeScript-6.0-3178c6?logo=typescript" alt="TypeScript">
   <img src="https://img.shields.io/badge/LangGraph-0.2-orange" alt="LangGraph">
   <img src="https://img.shields.io/badge/Tailwind-4.3-38bdf8?logo=tailwindcss" alt="Tailwind">
@@ -14,11 +14,11 @@ AI 数据分析助手 — 上传 CSV/Excel 数据，通过自然语言与 AI Age
 
 ## 功能
 
-- **文件上传解析**：支持 CSV / Excel，自动生成数据质量报告
+- **文件上传解析**：支持 CSV / XLSX，自动生成数据质量报告
 - **14 个分析工具**：统计描述、分组聚合、趋势分析、异常值检测、数据筛选排序
 - **5 种可视化图表**：柱状图、折线图、饼图、散点图、热力图（中文标题无乱码）
 - **Agent 多步推理**：LangGraph 编排，自动选择合适的工具组合
-- **SSE 实时流式**：对话逐字推送 + 工具调用可见 + 图表实时渲染
+- **SSE 过程推送**：分析过程、工具调用和图表通过 SSE 实时推送；最终回答当前不是 token 级逐字流式
 - **分析报告生成**：LLM 自动生成结构化 Markdown 报告
 - **对话持久化**：SQLite 存储所有对话历史和图表记录
 
@@ -35,7 +35,7 @@ AI 数据分析助手 — 上传 CSV/Excel 数据，通过自然语言与 AI Age
 │ 历史文件    │ - Markdown 渲染           │ 数据概览        │
 │            │ - 工具调用卡片             │ 分析任务进度    │
 │            │ - 图表内联展示             │ 图表结果        │
-│            │ - 流式输出                │ 报告生成按钮    │
+│            │ - 过程事件输出             │ 报告生成按钮    │
 └────────────┴──────────────────────────┴────────────────┘
 ```
 
@@ -69,16 +69,16 @@ AI 数据分析助手 — 上传 CSV/Excel 数据，通过自然语言与 AI Age
 
 | 层级 | 技术 | 说明 |
 |------|------|------|
-| **Web 框架** | FastAPI | REST API + SSE 流式响应 |
+| **Web 框架** | FastAPI | REST API + SSE 分析过程事件 |
 | **Agent 编排** | LangGraph + LangChain | StateGraph, Tool Calling, astream |
-| **LLM** | DeepSeek API (`deepseek-chat`) | 默认 Provider，可切换 OpenAI |
-| **数据处理** | pandas + numpy | CSV/Excel 解析、统计、聚合、过滤 |
+| **LLM** | DeepSeek API (`deepseek-chat`) | 默认 Provider；OpenAI Provider 仅预留，尚未实现 |
+| **数据处理** | pandas + numpy | CSV/XLSX 解析、统计、聚合、过滤 |
 | **可视化** | matplotlib + seaborn | 5 种图表，SimHei 中文字体 |
 | **数据库** | SQLite + SQLAlchemy | 文件、对话、消息、图表 4 表 |
-| **前端** | React 18 + TypeScript 6 | SPA，17 个组件 |
+| **前端** | React 19 + TypeScript 6 | SPA，17 个组件 |
 | **构建** | Vite 8 + Tailwind CSS 4 | HMR + 暗色主题 |
 | **Markdown** | react-markdown + remark-gfm | AI 回复渲染 |
-| **测试** | pytest + pytest-asyncio | 15 个测试 |
+| **测试** | pytest + pytest-asyncio | 单元测试 + API 主链路集成测试 |
 
 ## 快速开始
 
@@ -101,6 +101,7 @@ pip install -r requirements.txt
 # 配置 API Key
 cp .env.example .env
 # 编辑 .env，填入 DEEPSEEK_API_KEY=sk-xxxxx
+# BACKEND_HOST、BACKEND_PORT 和 FRONTEND_ORIGIN 也由该文件统一配置
 
 # 安装前端依赖
 cd frontend && npm install && cd ..
@@ -109,14 +110,16 @@ cd frontend && npm install && cd ..
 ### 启动
 
 ```bash
-# 终端 1：启动后端
-py -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+# 终端 1：启动后端（读取根目录 .env）
+py -m app.run
 
 # 终端 2：启动前端
 cd frontend && npm run dev
 ```
 
 打开 http://localhost:5173 开始使用。
+
+默认后端地址为 `http://127.0.0.1:8000`。`app.run`、CORS 和 Vite 开发代理均读取根目录 `.env` 中的同一套配置。
 
 ## 使用流程
 
@@ -134,15 +137,15 @@ cd frontend && npm run dev
 
 | 方法 | 端点 | 说明 |
 |------|------|------|
-| `POST` | `/api/v1/files/upload` | 上传 CSV/Excel 文件 |
+| `POST` | `/api/v1/files/upload` | 上传 CSV/XLSX 文件 |
 | `GET` | `/api/v1/files` | 文件列表 |
 | `GET` | `/api/v1/files/{id}` | 文件详情（含列信息 + 数据画像） |
 | `GET` | `/api/v1/files/{id}/preview` | 文件预览（前 N 行） |
-| `POST` | `/api/v1/chat/stream` | SSE 流式对话（Agent 自动调用工具） |
-| `POST` | `/api/v1/report/generate` | 生成 Markdown 分析报告 |
+| `POST` | `/api/v1/chat/stream` | SSE 分析过程推送（Agent 自动调用工具） |
+| `POST` | `/api/v1/report/generate` | 根据指定对话生成 Markdown 分析报告 |
 | `GET` | `/health` | 健康检查 |
 
-SSE 事件类型：`tool` | `text` | `chart` | `done`
+SSE 事件类型：`tool` | `text` | `chart` | `error` | `done`。`text` 当前通常是完整回答片段，不代表模型 token 级流式。
 
 ## 分析工具（14 个）
 
@@ -172,11 +175,11 @@ ai-data-analyst/
 │   ├── config.py            # 环境变量配置
 │   ├── api/                 # 路由层
 │   │   ├── files.py         # 文件上传/查询 (4 endpoints)
-│   │   ├── chat.py          # SSE 流式对话
+│   │   ├── chat.py          # SSE 分析过程事件
 │   │   └── report.py        # 报告生成
 │   ├── services/            # 业务层
 │   │   ├── agent.py         # LangGraph Agent 编排
-│   │   ├── parser.py        # CSV/Excel 解析
+│   │   ├── parser.py        # CSV/XLSX 解析
 │   │   ├── profiler.py      # 数据质量分析
 │   │   ├── chart_engine.py  # matplotlib 图表引擎
 │   │   ├── report_generator.py  # LLM 报告生成

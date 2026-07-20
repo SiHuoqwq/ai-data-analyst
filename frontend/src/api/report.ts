@@ -1,9 +1,9 @@
 import { apiClient } from './client';
 
-export async function generateReport(fileId: string, conversationId?: string): Promise<string> {
+export async function generateReport(fileId: string, conversationId: string): Promise<string> {
   const { data } = await apiClient.post<{ report: string }>('/report/generate', {
     file_id: fileId,
-    conversation_id: conversationId || null,
+    conversation_id: conversationId,
   });
   return data.report;
 }

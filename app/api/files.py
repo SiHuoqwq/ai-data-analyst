@@ -1,10 +1,11 @@
+import os
 import uuid
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from app.services.parser import parse_file, extract_columns_info
 from app.services.profiler import generate_profile
 from app.config import settings
 from app.db.database import SessionLocal
-from app.db.models import FileModel
+from app.db.models import ChartModel, ConversationModel, FileModel, MessageModel
 from app.models.file import FileDetail, FileListItem, FilePreview, ColumnInfo
 
 router = APIRouter(prefix="/api/v1/files", tags=["files"])
@@ -12,24 +13,30 @@ router = APIRouter(prefix="/api/v1/files", tags=["files"])
 
 @router.post("/upload", response_model=FileDetail)
 async def upload_file(file: UploadFile = File(...)):
-    ext = file.filename.split(".")[-1].lower() if "." in file.filename else ""
-    if ext not in ("csv", "xlsx", "xls"):
+    filename = file.filename or ""
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    if ext not in ("csv", "xlsx"):
         raise HTTPException(400, f"不支持的文件格式: .{ext}")
 
     file_id = str(uuid.uuid4())
     filepath = f"{settings.upload_dir}/{file_id}.{ext}"
 
-    content = await file.read()
-    with open(filepath, "wb") as f:
-        f.write(content)
+    try:
+        content = await file.read()
+        with open(filepath, "wb") as f:
+            f.write(content)
 
-    df = parse_file(filepath)
-    columns_info = extract_columns_info(df)
-    profile = generate_profile(df)
+        df = parse_file(filepath)
+        columns_info = extract_columns_info(df)
+        profile = generate_profile(df)
+    except Exception as exc:
+        if os.path.exists(filepath):
+            os.remove(filepath)
+        raise HTTPException(422, f"文件解析失败: {exc}") from exc
 
     db = SessionLocal()
     record = FileModel(
-        id=file_id, filename=file.filename, filepath=filepath,
+        id=file_id, filename=filename, filepath=filepath,
         file_type=ext, row_count=len(df), col_count=len(df.columns),
         columns_info=columns_info, profile_report=profile,
     )
@@ -100,17 +107,34 @@ def preview_file(file_id: str, rows: int = 20):
 
 @router.delete("/{file_id}")
 def delete_file(file_id: str):
-    import os
     db = SessionLocal()
     record = db.query(FileModel).filter(FileModel.id == file_id).first()
     if not record:
         db.close()
         raise HTTPException(404, "文件不存在")
 
-    if os.path.exists(record.filepath):
-        os.remove(record.filepath)
+    chart_paths = [
+        filepath
+        for (filepath,) in (
+            db.query(ChartModel.filepath)
+            .join(MessageModel, ChartModel.message_id == MessageModel.id)
+            .join(ConversationModel, MessageModel.conv_id == ConversationModel.id)
+            .filter(ConversationModel.file_id == file_id)
+            .all()
+        )
+    ]
+    uploaded_path = record.filepath
 
     db.delete(record)
     db.commit()
     db.close()
+
+    # Database relations are removed first. Any failed filesystem cleanup leaves
+    # a harmless unreferenced file rather than a database row pointing to no file.
+    for path in [uploaded_path, *chart_paths]:
+        if os.path.exists(path):
+            try:
+                os.remove(path)
+            except OSError:
+                pass
     return {"ok": True}

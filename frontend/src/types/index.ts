@@ -58,7 +58,12 @@ export interface SSEDoneEvent {
   chart_paths?: string[];
 }
 
-export type SSEEvent = SSEToolEvent | SSETextEvent | SSEToolResultEvent | SSEChartEvent | SSEDoneEvent;
+export interface SSEErrorEvent {
+  type: 'error';
+  message: string;
+}
+
+export type SSEEvent = SSEToolEvent | SSETextEvent | SSEToolResultEvent | SSEChartEvent | SSEDoneEvent | SSEErrorEvent;
 
 export type AppStage = 'empty' | 'upload' | 'ready' | 'analyzing' | 'complete';
 

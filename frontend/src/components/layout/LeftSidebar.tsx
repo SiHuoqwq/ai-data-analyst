@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, type Dispatch, type SetStateAction } from 'react';
 import type { AppStage, FileDetail, FileListItem, ConversationItem } from '../../types';
 import { listFiles, getFileDetail, deleteFile } from '../../api/files';
 import { listConversations } from '../../api/conversations';
@@ -13,7 +13,7 @@ interface Props {
   setActiveFile: (file: FileDetail | null) => void;
   setStage: (stage: AppStage) => void;
   setToolCalls: (calls: never[]) => void;
-  setChartPaths: (paths: string[]) => void;
+  setChartPaths: Dispatch<SetStateAction<string[]>>;
   conversations: ConversationItem[];
   setConversations: (convs: ConversationItem[]) => void;
   activeConversationId: string | null;
@@ -26,21 +26,23 @@ export default function LeftSidebar({
   conversations, setConversations, activeConversationId, setActiveConversationId,
   conversationsDirty,
 }: Props) {
+  const activeFileId = activeFile?.id;
+
   useEffect(() => {
     listFiles().then(setFiles).catch(console.error);
   }, [setFiles]);
 
   // Fetch conversations when active file or dirty counter changes
   useEffect(() => {
-    if (activeFile) {
-      listConversations(activeFile.id)
+    if (activeFileId) {
+      listConversations(activeFileId)
         .then(setConversations)
         .catch(console.error);
     } else {
       setConversations([]);
       setActiveConversationId(null);
     }
-  }, [activeFile?.id, conversationsDirty, setConversations, setActiveConversationId]);
+  }, [activeFileId, conversationsDirty, setConversations, setActiveConversationId]);
 
   const refreshFiles = () => {
     listFiles().then(setFiles).catch(console.error);

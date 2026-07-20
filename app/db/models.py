@@ -30,7 +30,12 @@ class ConversationModel(Base):
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
     file = relationship("FileModel", back_populates="conversations")
-    messages = relationship("MessageModel", back_populates="conversation", cascade="all, delete-orphan")
+    messages = relationship(
+        "MessageModel",
+        back_populates="conversation",
+        cascade="all, delete-orphan",
+        order_by="MessageModel.created_at",
+    )
 
 
 class MessageModel(Base):

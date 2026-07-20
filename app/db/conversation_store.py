@@ -1,4 +1,5 @@
 import uuid
+import os
 from app.db.database import SessionLocal
 from app.db.models import ConversationModel, MessageModel, ChartModel
 
@@ -28,20 +29,77 @@ def save_message(conv_id: str, role: str, content: str, tool_calls: list | None 
 
 def save_chart(message_id: str, chart_type: str, title: str, filepath: str, config: dict | None = None) -> ChartModel:
     db = SessionLocal()
-    chart = ChartModel(
-        id=str(uuid.uuid4()), message_id=message_id,
-        chart_type=chart_type, title=title, filepath=filepath, config=config or {},
-    )
-    db.add(chart)
-    db.commit()
-    db.refresh(chart)
-    db.close()
-    return chart
+    try:
+        chart = ChartModel(
+            id=str(uuid.uuid4()), message_id=message_id,
+            chart_type=chart_type, title=title, filepath=filepath, config=config or {},
+        )
+        db.add(chart)
+        db.commit()
+        db.refresh(chart)
+        return chart
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+def save_assistant_message_with_charts(
+    conv_id: str,
+    content: str,
+    tool_calls: list | None = None,
+    chart_paths: list[str] | None = None,
+) -> MessageModel:
+    """Persist the assistant message and its charts in one transaction."""
+    db = SessionLocal()
+    try:
+        paths = chart_paths or []
+        msg = MessageModel(
+            id=str(uuid.uuid4()),
+            conv_id=conv_id,
+            role="assistant",
+            content=content,
+            tool_calls=tool_calls,
+            chart_ids=paths,
+        )
+        db.add(msg)
+        db.flush()
+
+        for filepath in paths:
+            db.add(ChartModel(
+                id=str(uuid.uuid4()),
+                message_id=msg.id,
+                chart_type="auto",
+                title=os.path.basename(filepath),
+                filepath=filepath,
+                config={},
+            ))
+
+        db.commit()
+        db.refresh(msg)
+        return msg
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
 
 
 def get_conversation(conv_id: str) -> ConversationModel | None:
     db = SessionLocal()
     conv = db.query(ConversationModel).filter(ConversationModel.id == conv_id).first()
+    db.close()
+    return conv
+
+
+def get_conversation_for_file(conv_id: str, file_id: str) -> ConversationModel | None:
+    db = SessionLocal()
+    conv = (
+        db.query(ConversationModel)
+        .filter(ConversationModel.id == conv_id, ConversationModel.file_id == file_id)
+        .first()
+    )
     db.close()
     return conv
 

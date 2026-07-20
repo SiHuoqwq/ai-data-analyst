@@ -6,7 +6,7 @@ def parse_file(filepath: str) -> pd.DataFrame:
     ext = Path(filepath).suffix.lower()
     if ext == ".csv":
         return pd.read_csv(filepath)
-    elif ext in (".xlsx", ".xls"):
+    elif ext == ".xlsx":
         return pd.read_excel(filepath)
     else:
         raise ValueError(f"Unsupported file type: {ext}")

@@ -9,9 +9,10 @@ interface Props {
   stage: AppStage;
   toolCalls: { name: string; args: Record<string, unknown>; status: 'pending' | 'running' | 'done' }[];
   chartPaths: string[];
+  activeConversationId: string | null;
 }
 
-export default function ContextPanel({ activeFile, stage, toolCalls, chartPaths }: Props) {
+export default function ContextPanel({ activeFile, stage, toolCalls, chartPaths, activeConversationId }: Props) {
   const hasFile = activeFile !== null;
 
   return (
@@ -39,6 +40,7 @@ export default function ContextPanel({ activeFile, stage, toolCalls, chartPaths 
             <ResultsView
               chartPaths={chartPaths}
               activeFileId={activeFile?.id ?? null}
+              activeConversationId={activeConversationId}
             />
           )}
         </>

@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, type Dispatch, type SetStateAction } from 'react';
 import type { AppStage, FileDetail } from '../../types';
 import { streamChat } from '../../api/chat';
 import { getConversation } from '../../api/conversations';
@@ -18,7 +18,7 @@ interface Props {
   setToolCalls: (
     calls: { name: string; args: Record<string, unknown>; status: 'pending' | 'running' | 'done' }[]
   ) => void;
-  setChartPaths: (paths: string[]) => void;
+  setChartPaths: Dispatch<SetStateAction<string[]>>;
   activeConversationId: string | null;
   setActiveConversationId: (id: string | null) => void;
   markConversationsDirty: () => void;
@@ -133,11 +133,7 @@ export default function ChatPanel({
                 (p) => p.replace(/^\.\//, '/')
               );
 
-              let finalToolCalls: {
-                name: string;
-                args: Record<string, unknown>;
-                status: 'done';
-              }[] = [];
+              let finalToolCalls: ToolCall[] = [];
               let finalChartPaths: string[] = backendChartPaths;
 
               setMessages((prev) => {
@@ -182,6 +178,10 @@ export default function ChatPanel({
               });
               updateParentChartPaths((prev) => [...prev, normalized]);
               break;
+            }
+
+            case 'error': {
+              throw new Error(event.message);
             }
           }
         }

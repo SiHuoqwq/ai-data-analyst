@@ -54,6 +54,7 @@ function App() {
           stage={stage}
           toolCalls={toolCalls}
           chartPaths={chartPaths}
+          activeConversationId={activeConversationId}
         />
       </div>
     </div>
