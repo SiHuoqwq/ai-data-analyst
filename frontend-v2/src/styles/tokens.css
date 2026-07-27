@@ -1,0 +1,34 @@
+:root {
+  --page: #f3f5f7;
+  --panel: #ffffff;
+  --panel-subtle: #f8fafb;
+  --text: #17212b;
+  --text-muted: #667482;
+  --border: #dce2e7;
+  --border-strong: #bfc9d2;
+  --brand: #245e8d;
+  --brand-hover: #194a72;
+  --brand-soft: #eaf2f8;
+  --success: #26724d;
+  --warning: #9a6815;
+  --danger: #b33a35;
+  --danger-soft: #fff0ef;
+  --font-display: "Aptos Display", "Segoe UI Variable Display", "Microsoft YaHei", sans-serif;
+  --font-body: "Aptos", "Segoe UI Variable Text", "Microsoft YaHei", sans-serif;
+  --font-data: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+  --text-xs: .75rem;
+  --text-sm: .875rem;
+  --text-md: 1rem;
+  --text-lg: 1.25rem;
+  --text-xl: clamp(1.75rem, 3vw, 2.55rem);
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --shadow: 0 1px 2px rgba(20, 33, 43, .05), 0 8px 28px rgba(20, 33, 43, .04);
+  --max-width: 1240px;
+  --space-1: .375rem;
+  --space-2: .625rem;
+  --space-3: 1rem;
+  --space-4: 1.5rem;
+  --space-5: 2rem;
+  --space-6: 3rem;
+}
