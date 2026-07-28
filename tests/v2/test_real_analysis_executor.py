@@ -123,6 +123,13 @@ def test_executor_runs_structured_plan_and_passes_artifact_evidence(v2_runtime):
     answer = session.get(MessageModel, completed.answer_message_id)
 
     assert completed.status == "completed"
+    final_text = next(
+        item
+        for item in artifacts
+        if item.artifact_type == "text"
+        and item.title == "分析结论"
+    )
+    assert final_text.payload_json["content"] == answer.content
     assert answer.content == "A 类与 B 类销售额来自本次分组结果。"
     assert {item.artifact_type for item in artifacts} == {
         "text",

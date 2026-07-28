@@ -10,13 +10,15 @@ from app.v2.db.models import (
     utc_now,
 )
 from app.v2.domain.state_machine import RunStatus, StepStatus, transition_run
-from app.v2.services.artifacts import ArtifactFactory
+from app.v2.services.artifacts import ArtifactDraft, ArtifactFactory
 from app.v2.services.analytics import (
     StructuredAnalysisTools,
     ToolExecutionError,
     ToolExecutionResult,
 )
 from app.v2.services.events import EventEmitter
+from app.v2.services.evidence import EvidenceRegistry
+from app.v2.services.markdown_renderer import ConclusionMarkdownRenderer
 from app.v2.services.provider import AnalysisProvider, ProviderError
 from app.v2.services.runs import AnalysisRunService
 from app.v2.services.tools import V1DataToolAdapter
@@ -228,6 +230,7 @@ class AnalysisExecutor:
                             "artifact_id": artifact.id,
                             "artifact_type": artifact.artifact_type,
                             "title": artifact.title,
+                            "source_tool": provider_step.operation,
                             **result_evidence,
                         }
                         for artifact in artifacts
@@ -238,6 +241,7 @@ class AnalysisExecutor:
                             "artifact_id": artifact.id,
                             "artifact_type": artifact.artifact_type,
                             "title": artifact.title,
+                            "source_tool": provider_step.operation,
                             "summary": {
                                 "row_count": artifact.row_count,
                             },
@@ -305,11 +309,37 @@ class AnalysisExecutor:
                 total_steps,
                 None,
             )
-            answer = self.provider.build_answer(
-                question, file_record, evidence
+            registry = EvidenceRegistry.from_tool_evidence(run.id, evidence)
+            build_conclusion = getattr(
+                self.provider, "build_conclusion", None
             )
+            if callable(build_conclusion):
+                conclusion = build_conclusion(
+                    question, file_record, registry
+                )
+                registry.validate_conclusion(conclusion)
+                answer = ConclusionMarkdownRenderer().render(
+                    conclusion, registry
+                )
+            else:
+                answer = self.provider.build_answer(
+                    question, file_record, evidence
+                )
             if self._cancel_if_requested(session, run, active_step):
                 return
+            answer_artifact = self.artifacts.create(
+                session,
+                run,
+                active_step,
+                ArtifactDraft(
+                    artifact_type="text",
+                    title="分析结论",
+                    content_format="markdown",
+                    payload={"format": "markdown", "content": answer},
+                ),
+            )
+            session.flush()
+            produced_ids.append(answer_artifact.id)
             answer_message = MessageModel(
                 id=str(uuid.uuid4()),
                 conv_id=run.conversation_id,
@@ -322,7 +352,12 @@ class AnalysisExecutor:
             session.add(answer_message)
             session.flush()
             self._complete_step(
-                session, run, active_step, [], 0, total_steps
+                session,
+                run,
+                active_step,
+                [answer_artifact],
+                0,
+                total_steps,
             )
             active_step = None
 

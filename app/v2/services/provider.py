@@ -13,6 +13,15 @@ from app.v2.schemas.analysis import (
     PlanStepDraft,
     model_tool_catalog,
 )
+from app.v2.schemas.conclusions import (
+    ConclusionFinding,
+    ConclusionRecommendation,
+    StructuredConclusion,
+)
+from app.v2.services.evidence import (
+    ConclusionEvidenceError,
+    EvidenceRegistry,
+)
 from app.v2.services.structured_response import (
     StructuredResponseError,
     StructuredResponseParser,
@@ -74,6 +83,13 @@ class AnalysisProvider(Protocol):
         evidence: list[dict[str, Any]],
     ) -> str: ...
 
+    def build_conclusion(
+        self,
+        question: str,
+        file_record: FileModel,
+        registry: EvidenceRegistry,
+    ) -> StructuredConclusion: ...
+
 
 class FakeAnalysisProvider:
     name = "fake"
@@ -131,6 +147,39 @@ class FakeAnalysisProvider:
         return (
             f"已完成对 **{file_record.filename}** 的确定性数据概览。"
             f"结论与展示内容来自结构化产物：{references}。"
+        )
+
+    def build_conclusion(
+        self,
+        question: str,
+        file_record: FileModel,
+        registry: EvidenceRegistry,
+    ) -> StructuredConclusion:
+        keys = [item.key for item in registry.items]
+        if not keys:
+            raise ProviderError(
+                "UNGROUNDED_ANSWER",
+                "本次分析没有可用于生成结论的结构化证据",
+            )
+        primary = keys[: min(3, len(keys))]
+        return StructuredConclusion(
+            headline="数据概览结论",
+            overview="本次结论由已完成的确定性分析步骤生成。",
+            findings=[
+                ConclusionFinding(
+                    title="关键数据已完成核验",
+                    statement="当前数据集的主要结构化结果已生成。",
+                    evidence_keys=primary,
+                )
+            ],
+            recommendations=[
+                ConclusionRecommendation(
+                    action="结合结构化结果继续检查重点分组",
+                    reason="当前证据可作为后续分析的可靠起点",
+                    evidence_keys=primary,
+                )
+            ],
+            limitations=["测试分析模式不读取历史回答作为计算输入。"],
         )
 
 
@@ -447,6 +496,112 @@ class DeepSeekProvider:
                 },
             )
         return answer
+
+    def build_conclusion(
+        self,
+        question: str,
+        file_record: FileModel,
+        registry: EvidenceRegistry,
+    ) -> StructuredConclusion:
+        self._require_config()
+        payload = {
+            "question": question[:4000],
+            "dataset": self._safe_dataset_profile(file_record),
+            "evidence_registry": registry.prompt_payload(),
+            "conclusion_schema": StructuredConclusion.model_json_schema(),
+            "rules": [
+                "仅返回一个完整 JSON 对象",
+                "所有业务数字只能通过 evidence_keys 引用，不得写入叙述字段",
+                "每个 finding 和 recommendation 必须引用当前 evidence key",
+                "不得输出文件路径、URL、内部 ID 或服务器信息",
+            ],
+        }
+        content = self._chat(
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        "你是严谨的数据分析师。根据证据注册表返回结构化结论，"
+                        "只返回符合 Schema 的 JSON 对象。"
+                    ),
+                },
+                {"role": "user", "content": self._bounded_json(payload)},
+            ],
+            temperature=0.2,
+        )
+        try:
+            return self._validate_conclusion_response(content, registry)
+        except (
+            StructuredResponseError,
+            ValidationError,
+            ConclusionEvidenceError,
+        ) as initial_error:
+            self._raise_if_cancelled()
+            repaired = self._repair_conclusion_response(
+                content, initial_error, registry
+            )
+            try:
+                return self._validate_conclusion_response(repaired, registry)
+            except (
+                StructuredResponseError,
+                ValidationError,
+                ConclusionEvidenceError,
+            ) as exc:
+                raise ProviderError(
+                    "UNGROUNDED_ANSWER",
+                    "分析服务返回的结论无法由本次结构化证据验证",
+                    retryable=False,
+                ) from exc
+
+    def _validate_conclusion_response(
+        self,
+        content: str,
+        registry: EvidenceRegistry,
+    ) -> StructuredConclusion:
+        conclusion = StructuredConclusion.model_validate(
+            self._structured_parser.parse_object(content)
+        )
+        return registry.validate_conclusion(conclusion)
+
+    def _repair_conclusion_response(
+        self,
+        content: str,
+        error: (
+            StructuredResponseError
+            | ValidationError
+            | ConclusionEvidenceError
+        ),
+        registry: EvidenceRegistry,
+    ) -> str:
+        issues = (
+            self._validation_issues(error)
+            if isinstance(error, (StructuredResponseError, ValidationError))
+            else [{"location": ["evidence_keys"], "type": "unknown_evidence"}]
+        )
+        payload = {
+            "invalid_response_excerpt": self._safe_response_excerpt(content),
+            "validation_issues": issues,
+            "evidence_registry": registry.prompt_payload(),
+            "conclusion_schema": StructuredConclusion.model_json_schema(),
+            "rules": [
+                "仅返回一个完整 JSON 对象",
+                "叙述字段不得包含数字",
+                "只能引用给定 evidence key",
+            ],
+        }
+        return self._chat(
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        "修复结构化分析结论，不重新执行分析。"
+                        "只返回符合 Schema 的 JSON 对象。"
+                    ),
+                },
+                {"role": "user", "content": self._bounded_json(payload)},
+            ],
+            temperature=0,
+        )
 
     def close(self) -> None:
         if self._owns_client and self._client is not None:

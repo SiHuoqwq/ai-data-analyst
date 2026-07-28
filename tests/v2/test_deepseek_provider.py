@@ -4,6 +4,7 @@ import httpx
 import pytest
 
 from app.db.models import FileModel
+from app.v2.services.evidence import EvidenceRegistry
 from app.v2.services.provider import DeepSeekProvider, ProviderError
 
 
@@ -85,6 +86,89 @@ def valid_inspect_plan() -> str:
             ],
         }
     )
+
+
+def conclusion_registry() -> EvidenceRegistry:
+    return EvidenceRegistry.from_tool_evidence(
+        "run-1",
+        [
+            {
+                "artifact_id": "artifact-private-id",
+                "artifact_type": "table",
+                "source_tool": "group_aggregate",
+                "title": "课程汇总",
+                "summary": {},
+                "preview": [{"课程类别": "AI 应用", "报名人数": 12}],
+            }
+        ],
+    )
+
+
+def valid_conclusion(key: str) -> str:
+    return json.dumps(
+        {
+            "headline": "课程运营结论",
+            "overview": "课程表现需要持续观察。",
+            "findings": [
+                {
+                    "title": "主要发现",
+                    "statement": "该课程类别报名表现值得关注。",
+                    "evidence_keys": [key],
+                }
+            ],
+            "recommendations": [
+                {
+                    "action": "持续跟踪课程运营表现。",
+                    "reason": "当前结构化结果提供了可靠依据。",
+                    "evidence_keys": [key],
+                }
+            ],
+            "limitations": ["结论仅基于当前数据集。"],
+        },
+        ensure_ascii=False,
+    )
+
+
+def test_deepseek_builds_grounded_conclusion_and_repairs_once():
+    registry = conclusion_registry()
+    key = registry.items[0].key
+    requests = []
+    responses = iter(("not-json", valid_conclusion(key)))
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(json.loads(request.content))
+        return response(next(responses))
+
+    conclusion = provider_with(handler).build_conclusion(
+        "分析课程表现",
+        file_record(),
+        registry,
+    )
+
+    assert conclusion.findings[0].evidence_keys == [key]
+    assert len(requests) == 2
+    repair_payload = requests[1]["messages"][1]["content"]
+    assert "artifact-private-id" not in repair_payload
+    assert "SENSITIVE_ROW_VALUE" not in repair_payload
+
+
+def test_deepseek_rejects_conclusion_after_single_failed_repair():
+    registry = conclusion_registry()
+    requests = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(json.loads(request.content))
+        return response("not-json")
+
+    with pytest.raises(ProviderError) as error:
+        provider_with(handler).build_conclusion(
+            "分析课程表现",
+            file_record(),
+            registry,
+        )
+
+    assert error.value.code == "UNGROUNDED_ANSWER"
+    assert len(requests) == 2
 
 
 def test_deepseek_repairs_an_invalid_plan_at_most_once():
