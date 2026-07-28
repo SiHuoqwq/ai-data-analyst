@@ -71,6 +71,84 @@ def provider_with(handler, **overrides) -> DeepSeekProvider:
     )
 
 
+def valid_inspect_plan() -> str:
+    return json.dumps(
+        {
+            "goal": "inspect the dataset",
+            "steps": [
+                {
+                    "id": "inspect",
+                    "tool": "inspect_dataset",
+                    "purpose": "inspect fields",
+                    "arguments": {},
+                }
+            ],
+        }
+    )
+
+
+def test_deepseek_repairs_an_invalid_plan_at_most_once():
+    requests = []
+    responses = iter(("not-json", valid_inspect_plan()))
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(json.loads(request.content))
+        return response(next(responses))
+
+    plan = provider_with(handler).build_plan(
+        "inspect the dataset",
+        file_record(),
+        history=[],
+    )
+
+    assert [step.operation for step in plan.steps] == ["inspect_dataset"]
+    assert len(requests) == 2
+    repair_payload = json.loads(requests[1]["messages"][1]["content"])
+    assert repair_payload["invalid_response_excerpt"] == "not-json"
+    assert "plan_schema" in repair_payload
+    assert "allowed_tools" in repair_payload
+    assert "SENSITIVE_ROW_VALUE" not in json.dumps(repair_payload)
+
+
+def test_deepseek_fails_after_one_invalid_plan_repair():
+    calls = 0
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return response("still-not-json")
+
+    with pytest.raises(ProviderError) as raised:
+        provider_with(handler).build_plan(
+            "inspect the dataset",
+            file_record(),
+            history=[],
+        )
+
+    assert calls == 2
+    assert raised.value.code == "PROVIDER_INVALID_RESPONSE"
+    assert "still-not-json" not in raised.value.user_message
+    assert "still-not-json" not in json.dumps(raised.value.details)
+
+
+def test_deepseek_does_not_repair_plan_after_cancellation():
+    calls = 0
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return response("not-json")
+
+    provider = provider_with(handler)
+    provider.set_cancel_check(lambda: True)
+
+    with pytest.raises(ProviderError) as raised:
+        provider.build_plan("inspect the dataset", file_record(), history=[])
+
+    assert calls == 1
+    assert raised.value.code == "RUN_CANCELLED"
+
+
 def test_deepseek_build_plan_uses_strict_whitelisted_tools_and_minimized_schema():
     captured = {}
 

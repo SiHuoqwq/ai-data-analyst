@@ -219,6 +219,37 @@ def test_executor_persists_provider_error_code(v2_runtime):
     session.close()
 
 
+def test_executor_wires_cooperative_cancellation_into_provider(v2_runtime):
+    run = create_run("测试计划修复前取消", "provider-plan-cancel")
+
+    class CancellingProvider(ScriptedRealProvider):
+        def set_cancel_check(self, callback):
+            self.cancel_check = callback
+
+        def build_plan(self, _question, _file_record):
+            AnalysisRunService().request_cancel(run.id, "user_requested")
+            assert self.cancel_check() is True
+            raise ProviderError(
+                "RUN_CANCELLED",
+                "分析任务已取消",
+                retryable=False,
+            )
+
+    AnalysisExecutor(CancellingProvider()).execute(run.id)
+
+    session = database.SessionLocal()
+    cancelled = session.get(AnalysisRunModel, run.id)
+    assert cancelled.status == "cancelled"
+    assert cancelled.failure_json is None
+    assert (
+        session.query(MessageModel)
+        .filter_by(conv_id=run.conversation_id, role="assistant")
+        .count()
+        == 0
+    )
+    session.close()
+
+
 def test_executor_persists_sanitized_provider_error_details(v2_runtime):
     class UnsupportedAnswerProvider(ScriptedRealProvider):
         def build_answer(self, _question, _file_record, _evidence):

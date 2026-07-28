@@ -2,7 +2,7 @@ import json
 import re
 import time
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 
 import httpx
 from pydantic import ValidationError
@@ -12,6 +12,10 @@ from app.v2.schemas.analysis import (
     ModelPlanDraft,
     PlanStepDraft,
     model_tool_catalog,
+)
+from app.v2.services.structured_response import (
+    StructuredResponseError,
+    StructuredResponseParser,
 )
 
 
@@ -153,11 +157,18 @@ class DeepSeekProvider:
         self.max_tool_rounds = max_tool_rounds
         self.max_prompt_chars = max_prompt_chars
         self.history: list[dict[str, str]] = []
+        self._cancel_check: Callable[[], bool] | None = None
+        self._structured_parser = StructuredResponseParser()
         self._client = client
         self._owns_client = client is None
 
     def set_history(self, history: list[dict[str, str]]) -> None:
         self.history = self._limited_history(history)
+
+    def set_cancel_check(
+        self, cancel_check: Callable[[], bool] | None
+    ) -> None:
+        self._cancel_check = cancel_check
 
     def build_plan(
         self,
@@ -200,13 +211,18 @@ class DeepSeekProvider:
             temperature=0,
         )
         try:
-            draft = ModelPlanDraft.model_validate(self._parse_json(content))
-        except (ValueError, ValidationError, json.JSONDecodeError) as exc:
-            raise ProviderError(
-                "PROVIDER_INVALID_RESPONSE",
-                "分析服务返回了无法执行的计划",
-                retryable=False,
-            ) from exc
+            draft = self._validate_plan_response(content)
+        except (StructuredResponseError, ValidationError) as initial_error:
+            self._raise_if_cancelled()
+            repaired = self._repair_plan_response(content, initial_error)
+            try:
+                draft = self._validate_plan_response(repaired)
+            except (StructuredResponseError, ValidationError) as exc:
+                raise ProviderError(
+                    "PROVIDER_INVALID_RESPONSE",
+                    "分析服务返回了无法执行的计划",
+                    retryable=False,
+                ) from exc
         if len(draft.steps) > self.max_tool_rounds:
             raise ProviderError(
                 "TOOL_ROUND_LIMIT_EXCEEDED",
@@ -225,6 +241,83 @@ class DeepSeekProvider:
                 for step in draft.steps
             ),
         )
+
+    def _validate_plan_response(self, content: str) -> ModelPlanDraft:
+        return ModelPlanDraft.model_validate(
+            self._structured_parser.parse_object(content)
+        )
+
+    def _repair_plan_response(
+        self,
+        content: str,
+        error: StructuredResponseError | ValidationError,
+    ) -> str:
+        payload = {
+            "invalid_response_excerpt": self._safe_response_excerpt(content),
+            "validation_issues": self._validation_issues(error),
+            "allowed_tools": model_tool_catalog(),
+            "plan_schema": ModelPlanDraft.model_json_schema(),
+            "rules": [
+                "仅返回一个完整 JSON 对象",
+                "不得补写无法从现有响应确认的字段值",
+                "工具名称和参数必须通过给定 Schema",
+            ],
+        }
+        return self._chat(
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        "修复分析计划的结构，不执行计划。"
+                        "仅返回一个符合 Schema 的 JSON 对象。"
+                    ),
+                },
+                {"role": "user", "content": self._bounded_json(payload)},
+            ],
+            temperature=0,
+        )
+
+    def _raise_if_cancelled(self) -> None:
+        if self._cancel_check is not None and self._cancel_check():
+            raise ProviderError(
+                "RUN_CANCELLED",
+                "分析任务已取消",
+                retryable=False,
+            )
+
+    def _safe_response_excerpt(self, content: str) -> str:
+        excerpt = content[:2000]
+        excerpt = re.sub(
+            r"(?i)\b[A-Z]:[\\/][^\s\"']+",
+            "[redacted-path]",
+            excerpt,
+        )
+        excerpt = re.sub(
+            r"(?i)\bhttps?://[^\s\"']+",
+            "[redacted-url]",
+            excerpt,
+        )
+        if self.api_key:
+            excerpt = excerpt.replace(self.api_key, "[redacted]")
+        return excerpt
+
+    @staticmethod
+    def _validation_issues(
+        error: StructuredResponseError | ValidationError,
+    ) -> list[dict[str, Any]]:
+        if isinstance(error, ValidationError):
+            return [
+                {
+                    "location": list(item["loc"]),
+                    "type": item["type"],
+                }
+                for item in error.errors(
+                    include_url=False,
+                    include_input=False,
+                    include_context=False,
+                )
+            ]
+        return [{"location": [], "type": "invalid_json_object"}]
 
     def before_step(self) -> None:
         return None

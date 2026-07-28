@@ -85,6 +85,17 @@ class AnalysisExecutor:
                 if item.role in {"user", "assistant"}
             ]
             self.provider.set_history(history_context)
+            set_cancel_check = getattr(
+                self.provider, "set_cancel_check", None
+            )
+            if callable(set_cancel_check):
+                def provider_cancel_requested():
+                    session.refresh(
+                        run, attribute_names=["cancel_requested_at"]
+                    )
+                    return run.cancel_requested_at is not None
+
+                set_cancel_check(provider_cancel_requested)
             plan = self.provider.build_plan(question, file_record)
             expected_artifact_types: set[str] = set()
             structured_outputs = {
@@ -349,6 +360,17 @@ class AnalysisExecutor:
         except Exception as exc:
             session.rollback()
             run = session.get(AnalysisRunModel, run_id)
+            if (
+                run
+                and isinstance(exc, ProviderError)
+                and exc.code == "RUN_CANCELLED"
+                and run.cancel_requested_at is not None
+            ):
+                self.run_service._confirm_cancel(
+                    session, run, "user_requested"
+                )
+                session.commit()
+                return
             if run and run.status not in {
                 RunStatus.COMPLETED.value,
                 RunStatus.FAILED.value,
@@ -410,6 +432,11 @@ class AnalysisExecutor:
                 )
                 session.commit()
         finally:
+            set_cancel_check = getattr(
+                self.provider, "set_cancel_check", None
+            )
+            if callable(set_cancel_check):
+                set_cancel_check(None)
             close = getattr(self.provider, "close", None)
             if callable(close):
                 close()
