@@ -23,7 +23,17 @@ Base = declarative_base()
 
 
 def init_db():
-    Base.metadata.create_all(bind=engine)
+    from app.db.models import ChartModel, ConversationModel, FileModel, MessageModel
+
+    Base.metadata.create_all(
+        bind=engine,
+        tables=[
+            FileModel.__table__,
+            ConversationModel.__table__,
+            MessageModel.__table__,
+            ChartModel.__table__,
+        ],
+    )
 
 
 def configure_database(database_url: str):

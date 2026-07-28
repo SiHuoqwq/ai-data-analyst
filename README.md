@@ -121,6 +121,10 @@ cd frontend && npm run dev
 
 默认后端地址为 `http://127.0.0.1:8000`。`app.run`、CORS 和 Vite 开发代理均读取根目录 `.env` 中的同一套配置。
 
+### 最小 V2 后端
+
+仓库同时包含一个只使用 Fake Provider 的最小 `/api/v2` 分析闭环。迁移、启动、API、SSE、合作式取消和 V1/V2 共存边界见 [最小 V2 后端运行说明](docs/v2/MINIMAL_V2_BACKEND.md)。
+
 ## 使用流程
 
 1. 上传 CSV 或 Excel 数据文件
