@@ -191,6 +191,14 @@ def test_deepseek_rejects_answer_with_number_missing_from_evidence():
 
     assert raised.value.code == "UNGROUNDED_ANSWER"
     assert "88" not in raised.value.user_message
+    assert raised.value.details == {
+        "unsupported_numbers": [
+            {
+                "token": "88",
+                "semantic_category": "rate",
+            }
+        ]
+    }
 
 
 def test_deepseek_rejects_rate_claim_using_unrelated_row_count():

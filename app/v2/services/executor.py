@@ -358,7 +358,7 @@ class AnalysisExecutor:
                     error_code = exc.code
                     error_message = exc.user_message
                     retryable = exc.retryable
-                    error_details = {}
+                    error_details = exc.details
                 elif isinstance(exc, ToolExecutionError):
                     error_code = exc.code
                     error_message = exc.message

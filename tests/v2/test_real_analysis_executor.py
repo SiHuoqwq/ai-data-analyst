@@ -219,6 +219,43 @@ def test_executor_persists_provider_error_code(v2_runtime):
     session.close()
 
 
+def test_executor_persists_sanitized_provider_error_details(v2_runtime):
+    class UnsupportedAnswerProvider(ScriptedRealProvider):
+        def build_answer(self, _question, _file_record, _evidence):
+            raise ProviderError(
+                "UNGROUNDED_ANSWER",
+                "分析结论包含无法验证的数字",
+                retryable=False,
+                details={
+                    "unsupported_numbers": [
+                        {
+                            "token": "88",
+                            "semantic_category": "rate",
+                        }
+                    ]
+                },
+            )
+
+    run = create_run("测试数字证据错误", "provider-details")
+    AnalysisExecutor(UnsupportedAnswerProvider()).execute(run.id)
+
+    session = database.SessionLocal()
+    failed_step = (
+        session.query(RunStepModel)
+        .filter_by(run_id=run.id, operation="generate_answer")
+        .one()
+    )
+    assert failed_step.error_json["details"] == {
+        "unsupported_numbers": [
+            {
+                "token": "88",
+                "semantic_category": "rate",
+            }
+        ]
+    }
+    session.close()
+
+
 def test_executor_allows_one_bounded_tool_argument_repair(v2_runtime):
     class RepairingProvider(ScriptedRealProvider):
         def __init__(self):

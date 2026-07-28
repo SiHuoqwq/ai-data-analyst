@@ -21,11 +21,13 @@ class ProviderError(RuntimeError):
         code: str,
         user_message: str,
         retryable: bool = False,
+        details: dict[str, Any] | None = None,
     ):
         super().__init__(user_message)
         self.code = code
         self.user_message = user_message
         self.retryable = retryable
+        self.details = details or {}
 
 
 @dataclass(frozen=True)
@@ -336,14 +338,18 @@ class DeepSeekProvider:
                 "分析服务没有返回最终结论",
                 retryable=False,
             )
-        if not self._numbers_are_grounded(
+        unsupported_numbers = self._unsupported_numbers(
             answer,
             [{"dataset": payload["dataset"]}, *limited_evidence],
-        ):
+        )
+        if unsupported_numbers:
             raise ProviderError(
                 "UNGROUNDED_ANSWER",
                 "分析结论包含无法由本次工具结果验证的数字",
                 retryable=False,
+                details={
+                    "unsupported_numbers": unsupported_numbers[:10],
+                },
             )
         return answer
 
@@ -510,6 +516,12 @@ class DeepSeekProvider:
     def _numbers_are_grounded(
         cls, answer: str, evidence: list[dict[str, Any]]
     ) -> bool:
+        return not cls._unsupported_numbers(answer, evidence)
+
+    @classmethod
+    def _unsupported_numbers(
+        cls, answer: str, evidence: list[dict[str, Any]]
+    ) -> list[dict[str, str]]:
         pattern = re.compile(r"(?<![\w-])-?\d+(?:,\d{3})*(?:\.\d+)?")
         rate_markers = (
             "率",
@@ -538,6 +550,7 @@ class DeepSeekProvider:
         allowed: list[float] = []
         allowed_rates: list[float] = []
         allowed_amounts: list[float] = []
+        unsupported: list[dict[str, str]] = []
 
         def collect_artifact_ids(value: Any) -> None:
             if isinstance(value, dict):
@@ -612,6 +625,7 @@ class DeepSeekProvider:
             )[-1]
             if following.lstrip().startswith("%"):
                 candidates = allowed_rates
+                semantic_category = "rate"
             elif (
                 "￥"
                 in scan_answer[max(0, match.start() - 2) : match.start()]
@@ -620,16 +634,25 @@ class DeepSeekProvider:
                 or following.lstrip().startswith("元")
             ):
                 candidates = allowed_amounts
+                semantic_category = "amount"
             elif any(marker in context for marker in rate_markers):
                 candidates = allowed_rates
+                semantic_category = "rate"
             elif any(marker in context for marker in amount_markers):
                 candidates = allowed_amounts
+                semantic_category = "amount"
             else:
                 candidates = allowed
+                semantic_category = "general"
             if not any(
                 abs(number - candidate)
                 <= max(1e-6, display_tolerance)
                 for candidate in candidates
             ):
-                return False
-        return True
+                unsupported.append(
+                    {
+                        "token": match.group(0),
+                        "semantic_category": semantic_category,
+                    }
+                )
+        return unsupported
