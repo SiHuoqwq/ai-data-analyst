@@ -534,9 +534,21 @@ class DeepSeekProvider:
             "price",
         )
         ignored_keys = {"artifact_id", "title"}
+        allowed_artifact_ids: set[str] = set()
         allowed: list[float] = []
         allowed_rates: list[float] = []
         allowed_amounts: list[float] = []
+
+        def collect_artifact_ids(value: Any) -> None:
+            if isinstance(value, dict):
+                artifact_id = value.get("artifact_id")
+                if isinstance(artifact_id, str) and artifact_id:
+                    allowed_artifact_ids.add(artifact_id)
+                for nested in value.values():
+                    collect_artifact_ids(nested)
+            elif isinstance(value, list):
+                for nested in value:
+                    collect_artifact_ids(nested)
 
         def add_number(number: float, semantic_key: str) -> None:
             allowed.append(number)
@@ -568,21 +580,43 @@ class DeepSeekProvider:
                 for nested in value:
                     collect(nested, semantic_key)
 
+        collect_artifact_ids(evidence)
         collect(evidence)
-        for match in pattern.finditer(answer):
+        scan_answer = answer
+        for artifact_id in sorted(
+            allowed_artifact_ids, key=len, reverse=True
+        ):
+            scan_answer = scan_answer.replace(
+                artifact_id, " " * len(artifact_id)
+            )
+        for match in pattern.finditer(scan_answer):
             token = match.group(0).replace(",", "")
             number = float(token)
             decimal_places = (
                 len(token.rsplit(".", 1)[1]) if "." in token else 0
             )
             display_tolerance = 0.5 * (10 ** -decimal_places) + 1e-9
-            following = answer[match.end() : match.end() + 2]
-            context = answer[max(0, match.start() - 16) : match.start()].lower()
+            following = scan_answer[match.end() : match.end() + 2]
+            line_start = scan_answer.rfind("\n", 0, match.start()) + 1
+            line_prefix = scan_answer[line_start : match.start()].strip()
+            if (
+                line_prefix in {"", "-", "*"}
+                and following[:1] in {".", "、", ")", "）"}
+            ):
+                continue
+            raw_context = scan_answer[
+                max(0, match.start() - 16) : match.start()
+            ].lower()
+            context = re.split(
+                r"[。！？!?；;，,\r\n]", raw_context
+            )[-1]
             if following.lstrip().startswith("%"):
                 candidates = allowed_rates
             elif (
-                "￥" in answer[max(0, match.start() - 2) : match.start()]
-                or "¥" in answer[max(0, match.start() - 2) : match.start()]
+                "￥"
+                in scan_answer[max(0, match.start() - 2) : match.start()]
+                or "¥"
+                in scan_answer[max(0, match.start() - 2) : match.start()]
                 or following.lstrip().startswith("元")
             ):
                 candidates = allowed_amounts

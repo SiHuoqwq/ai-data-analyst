@@ -291,6 +291,42 @@ def test_deepseek_accepts_quantile_evidence_displayed_as_percentage():
     assert "75%" in answer
 
 
+def test_deepseek_ignores_allowed_artifact_id_and_markdown_ordinal():
+    artifact_id = "03243cd6-fd03-4e0d-bc7b-bdf5dff15977"
+    provider = provider_with(
+        lambda _request: response(
+            "完成率为 50%。\n"
+            "2. 样本数为 6，详见 artifact_id "
+            f"{artifact_id}。"
+        )
+    )
+
+    answer = provider.build_answer(
+        "说明结论和证据",
+        file_record(),
+        evidence=[
+            {
+                "artifact_id": artifact_id,
+                "artifact_type": "table",
+                "title": "课程汇总",
+                "summary": {
+                    "matched_groups": 6,
+                },
+                "preview": [
+                    {
+                        "平均完成率": 0.5,
+                        "报名人数": 6,
+                    }
+                ],
+            }
+        ],
+        history=[],
+    )
+
+    assert artifact_id in answer
+    assert "样本数为 6" in answer
+
+
 def test_deepseek_retries_one_server_error_then_succeeds():
     calls = 0
 
