@@ -135,7 +135,7 @@ def test_deepseek_build_plan_uses_strict_whitelisted_tools_and_minimized_schema(
     assert "sensitive://private" not in request_text
 
 
-def test_deepseek_build_answer_only_receives_limited_structured_evidence():
+def test_deepseek_build_answer_only_receives_user_facing_structured_evidence():
     captured = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -162,8 +162,19 @@ def test_deepseek_build_answer_only_receives_limited_structured_evidence():
     )
 
     assert "75%" in answer
-    request_text = json.dumps(captured["body"], ensure_ascii=False)
-    assert "artifact-1" in request_text
+    request_body = captured["body"]
+    request_text = json.dumps(request_body, ensure_ascii=False)
+    user_payload = json.loads(request_body["messages"][1]["content"])
+    assert "artifact_id" not in user_payload["evidence"][0]
+    assert "artifact-1" not in request_text
+    assert any(
+        "不要自行计算" in rule
+        for rule in user_payload["answer_rules"]
+    )
+    assert any(
+        "每个比例数值" in rule
+        for rule in user_payload["answer_rules"]
+    )
     assert "SENSITIVE_ROW_VALUE" not in request_text
     assert "sensitive://private" not in request_text
 
@@ -299,13 +310,11 @@ def test_deepseek_accepts_quantile_evidence_displayed_as_percentage():
     assert "75%" in answer
 
 
-def test_deepseek_ignores_allowed_artifact_id_and_markdown_ordinal():
-    artifact_id = "03243cd6-fd03-4e0d-bc7b-bdf5dff15977"
+def test_deepseek_ignores_markdown_ordinal():
     provider = provider_with(
         lambda _request: response(
             "完成率为 50%。\n"
-            "2. 样本数为 6，详见 artifact_id "
-            f"{artifact_id}。"
+            "2. 样本数为 6。"
         )
     )
 
@@ -314,7 +323,7 @@ def test_deepseek_ignores_allowed_artifact_id_and_markdown_ordinal():
         file_record(),
         evidence=[
             {
-                "artifact_id": artifact_id,
+                "artifact_id": "internal-artifact-id",
                 "artifact_type": "table",
                 "title": "课程汇总",
                 "summary": {
@@ -331,8 +340,7 @@ def test_deepseek_ignores_allowed_artifact_id_and_markdown_ordinal():
         history=[],
     )
 
-    assert artifact_id in answer
-    assert "样本数为 6" in answer
+    assert "2. 样本数为 6" in answer
 
 
 def test_deepseek_retries_one_server_error_then_succeeds():

@@ -297,7 +297,6 @@ class DeepSeekProvider:
         for item in evidence[:20]:
             limited_evidence.append(
                 {
-                    "artifact_id": item.get("artifact_id"),
                     "artifact_type": item.get("artifact_type"),
                     "title": item.get("title"),
                     "summary": item.get("summary", {}),
@@ -312,7 +311,10 @@ class DeepSeekProvider:
             "evidence": limited_evidence,
             "answer_rules": [
                 "先给关键结论，再给数据依据、限制和运营建议",
-                "只能引用 dataset、evidence 中出现的数字和 artifact_id",
+                "只能引用 dataset、evidence 中直接出现的业务数字",
+                "不要输出 artifact_id、内部 ID、URL 或其他技术标识符",
+                "不要自行计算 evidence 未直接提供的差值、倍数或百分比",
+                "每个比例数值都必须单独带 %，并保持一致格式",
                 "所有数值使用阿拉伯数字，不使用中文数字或模糊数量词",
                 "金额使用人民币格式，比例使用一致的百分比格式",
                 "样本量不足或字段缺失时必须说明",
