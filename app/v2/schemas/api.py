@@ -1,11 +1,53 @@
 import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class APIModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+
+class CreateConversationRequest(APIModel):
+    file_id: str = Field(min_length=1, max_length=200)
+    title: str | None = Field(default=None, max_length=300)
+
+    @field_validator("file_id")
+    @classmethod
+    def normalize_file_id(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("file_id cannot be blank")
+        return normalized
+
+    @field_validator("title")
+    @classmethod
+    def normalize_title(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip() or None
+
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={
+            "examples": [
+                {"file_id": "file-uuid", "title": "季度销售复盘"}
+            ]
+        },
+    )
+
+
+class ConversationSummary(APIModel):
+    id: str
+    file_id: str
+    title: str
+    mode: str
+    created_at: datetime.datetime
+
+
+class CreateConversationResponse(APIModel):
+    data: ConversationSummary
+    meta: "APIMeta"
 
 
 class RunContextRequest(APIModel):
@@ -57,6 +99,8 @@ class RunSummary(APIModel):
     dataset_version_id: str
     trigger_message_id: str
     answer_message_id: str | None
+    input_message_id: str
+    output_message_id: str | None
     status: str
     current_phase: str | None
     progress: dict[str, Any]
@@ -65,7 +109,9 @@ class RunSummary(APIModel):
     updated_at: datetime.datetime
     started_at: datetime.datetime | None
     completed_at: datetime.datetime | None
+    finished_at: datetime.datetime | None
     cancelled_at: datetime.datetime | None
+    error: dict[str, Any] | None
     last_event_sequence: int
     allowed_actions: dict[str, bool]
 
@@ -79,8 +125,11 @@ class CreatedMessage(APIModel):
 
 class CreatedRun(APIModel):
     id: str
+    conversation_id: str
     status: str
     dataset_version_id: str
+    input_message_id: str
+    output_message_id: str | None
 
 
 class CreateRunData(APIModel):

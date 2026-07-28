@@ -1,6 +1,7 @@
 import hashlib
 import json
 import uuid
+from dataclasses import dataclass
 
 from app.db.database import SessionLocal
 from app.db.models import ConversationModel, FileModel, MessageModel
@@ -17,6 +18,12 @@ class RunServiceError(RuntimeError):
         self.status_code = status_code
 
 
+@dataclass(frozen=True)
+class RunCreationResult:
+    run: AnalysisRunModel
+    created: bool
+
+
 class AnalysisRunService:
     def __init__(self, event_emitter: EventEmitter | None = None):
         self.events = event_emitter or EventEmitter()
@@ -30,6 +37,24 @@ class AnalysisRunService:
         parent_run_id: str | None = None,
         retry_of_run_id: str | None = None,
     ) -> AnalysisRunModel:
+        return self.create_run_result(
+            conversation_id=conversation_id,
+            dataset_version_id=dataset_version_id,
+            message=message,
+            idempotency_key=idempotency_key,
+            parent_run_id=parent_run_id,
+            retry_of_run_id=retry_of_run_id,
+        ).run
+
+    def create_run_result(
+        self,
+        conversation_id: str,
+        dataset_version_id: str | None,
+        message: str,
+        idempotency_key: str,
+        parent_run_id: str | None = None,
+        retry_of_run_id: str | None = None,
+    ) -> RunCreationResult:
         session = SessionLocal()
         try:
             conversation = session.get(ConversationModel, conversation_id)
@@ -41,12 +66,12 @@ class AnalysisRunService:
             file_record = session.get(FileModel, resolved_version_id)
             if not file_record:
                 raise RunServiceError(
-                    "DATASET_VERSION_NOT_FOUND", "数据版本不存在", 404
+                    "DATASET_NOT_FOUND", "数据集不存在", 404
                 )
             if conversation.file_id != resolved_version_id:
                 raise RunServiceError(
-                    "DATASET_VERSION_CONFLICT",
-                    "数据版本不属于当前对话",
+                    "CONVERSATION_DATASET_MISMATCH",
+                    "数据集与当前对话不一致",
                     409,
                 )
             request_body = {
@@ -79,7 +104,7 @@ class AnalysisRunService:
                         409,
                     )
                 session.refresh(existing)
-                return existing
+                return RunCreationResult(run=existing, created=False)
 
             now = utc_now()
             trigger = MessageModel(
@@ -135,7 +160,7 @@ class AnalysisRunService:
             )
             session.commit()
             session.refresh(run)
-            return run
+            return RunCreationResult(run=run, created=True)
         except Exception:
             session.rollback()
             raise

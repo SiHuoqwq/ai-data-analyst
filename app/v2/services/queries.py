@@ -125,6 +125,8 @@ class AnalysisQueryService:
             "dataset_version_id": run.dataset_version_id,
             "trigger_message_id": run.trigger_message_id,
             "answer_message_id": run.answer_message_id,
+            "input_message_id": run.trigger_message_id,
+            "output_message_id": run.answer_message_id,
             "status": run.status,
             "current_phase": run.current_phase,
             "progress": run.progress_json,
@@ -133,7 +135,9 @@ class AnalysisQueryService:
             "updated_at": as_utc(run.updated_at),
             "started_at": as_utc(run.started_at),
             "completed_at": as_utc(run.completed_at),
+            "finished_at": as_utc(run.completed_at),
             "cancelled_at": as_utc(run.cancelled_at),
+            "error": run.failure_json,
             "last_event_sequence": run.last_event_sequence,
             "allowed_actions": {
                 "cancel": run.status in {"queued", "running"},

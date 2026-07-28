@@ -218,7 +218,7 @@ def test_v2_errors_use_uniform_envelope(v2_runtime):
             json={"message": "分析数据", "dataset_version_id": "missing"},
         )
         assert missing_dataset.status_code == 404
-        assert missing_dataset.json()["error"]["code"] == "DATASET_VERSION_NOT_FOUND"
+        assert missing_dataset.json()["error"]["code"] == "DATASET_NOT_FOUND"
 
 
 def test_api_can_cancel_running_run(v2_runtime):

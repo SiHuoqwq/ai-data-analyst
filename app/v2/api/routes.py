@@ -13,10 +13,16 @@ from app.v2.schemas.api import (
     ArtifactListResponse,
     ArtifactResponse,
     CancelRunRequest,
+    CreateConversationRequest,
+    CreateConversationResponse,
     CreateRunRequest,
     CreateRunResponse,
     RunResponse,
     StepListResponse,
+)
+from app.v2.services.conversations import (
+    ConversationService,
+    ConversationServiceError,
 )
 from app.v2.services.executor import AnalysisExecutor
 from app.v2.services.queries import AnalysisQueryService
@@ -28,6 +34,7 @@ router = APIRouter(prefix="/api/v2", tags=["v2-analysis"])
 workers = ThreadPoolExecutor(max_workers=2, thread_name_prefix="v2-analysis")
 queries = AnalysisQueryService()
 run_service = AnalysisRunService()
+conversation_service = ConversationService()
 event_stream = RunEventStream()
 
 
@@ -44,10 +51,24 @@ def _raise_service_error(exc: RunServiceError):
 
 
 @router.post(
+    "/conversations",
+    status_code=201,
+    response_model=CreateConversationResponse,
+)
+def create_conversation(body: CreateConversationRequest):
+    try:
+        return {
+            "data": conversation_service.create(body.file_id, body.title),
+            "meta": _meta(),
+        }
+    except ConversationServiceError as exc:
+        _raise_service_error(exc)
+
+
+@router.post(
     "/conversations/{conversation_id}/runs",
     status_code=202,
     response_model=CreateRunResponse,
-    response_model_exclude_none=True,
 )
 def create_run(
     conversation_id: str,
@@ -67,7 +88,7 @@ def create_run(
             {"header": "Idempotency-Key"},
         )
     try:
-        run = run_service.create_run(
+        result = run_service.create_run_result(
             conversation_id=conversation_id,
             dataset_version_id=body.dataset_version_id,
             message=body.message,
@@ -75,6 +96,7 @@ def create_run(
             parent_run_id=body.parent_run_id,
             retry_of_run_id=body.retry_of_run_id,
         )
+        run = result.run
     except RunServiceError as exc:
         _raise_service_error(exc)
 
@@ -91,8 +113,11 @@ def create_run(
                 },
                 "run": {
                     "id": run.id,
+                    "conversation_id": run.conversation_id,
                     "status": run.status,
                     "dataset_version_id": run.dataset_version_id,
+                    "input_message_id": run.trigger_message_id,
+                    "output_message_id": run.answer_message_id,
                 },
                 "events_url": f"/api/v2/runs/{run.id}/events",
             },
@@ -101,14 +126,14 @@ def create_run(
     finally:
         session.close()
 
-    workers.submit(AnalysisExecutor(provider).execute, run.id)
+    if result.created:
+        workers.submit(AnalysisExecutor(provider).execute, run.id)
     return response
 
 
 @router.get(
     "/runs/{run_id}",
     response_model=RunResponse,
-    response_model_exclude_none=True,
 )
 def get_run(run_id: str):
     try:
@@ -161,7 +186,6 @@ def download_artifact(artifact_id: str):
     "/runs/{run_id}/cancel",
     status_code=202,
     response_model=RunResponse,
-    response_model_exclude_none=True,
 )
 def cancel_run(run_id: str, body: CancelRunRequest):
     try:
