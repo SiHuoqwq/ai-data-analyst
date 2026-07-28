@@ -1,12 +1,12 @@
 from app.v2.schemas.conclusions import StructuredConclusion
-from app.v2.services.evidence import EvidenceRegistry
+from app.v2.services.evidence import EvidenceAliasMap
 
 
 class ConclusionMarkdownRenderer:
     def render(
         self,
         conclusion: StructuredConclusion,
-        registry: EvidenceRegistry,
+        aliases: EvidenceAliasMap,
     ) -> str:
         lines = [f"# {conclusion.headline}", "", conclusion.overview]
         lines.extend(["", "## 关键发现"])
@@ -22,7 +22,7 @@ class ConclusionMarkdownRenderer:
                     "",
                 ]
             )
-            lines.extend(self._evidence_lines(finding.evidence_keys, registry))
+            lines.extend(self._evidence_lines(finding.evidence_refs, aliases))
         if conclusion.recommendations:
             lines.extend(["", "## 运营建议"])
             for recommendation in conclusion.recommendations:
@@ -36,8 +36,8 @@ class ConclusionMarkdownRenderer:
                 lines.extend(
                     f"  - 依据：{line[2:]}"
                     for line in self._evidence_lines(
-                        recommendation.evidence_keys,
-                        registry,
+                        recommendation.evidence_refs,
+                        aliases,
                     )
                 )
         if conclusion.limitations:
@@ -47,15 +47,15 @@ class ConclusionMarkdownRenderer:
 
     @staticmethod
     def _evidence_lines(
-        keys: list[str],
-        registry: EvidenceRegistry,
+        references: list[str],
+        aliases: EvidenceAliasMap,
     ) -> list[str]:
         result = []
         seen = set()
-        for key in keys:
-            if key in seen:
+        for reference in references:
+            if reference in seen:
                 continue
-            seen.add(key)
-            item = registry.get(key)
+            seen.add(reference)
+            item = aliases.get(reference)
             result.append(f"- {item.label}：{item.display_value}")
         return result

@@ -29,7 +29,9 @@ class AcceptanceProvider:
         return self.plan
 
     def build_conclusion(self, _question, _file_record, registry):
-        keys = [item.key for item in registry.items[:4]]
+        aliases = registry.create_alias_map(registry.items[:4])
+        self.last_conclusion_aliases = aliases
+        references = [entry.alias for entry in aliases.entries]
         return StructuredConclusion(
             headline="模拟验收结论",
             overview="结构化工具结果已完成核验。",
@@ -37,7 +39,7 @@ class AcceptanceProvider:
                 ConclusionFinding(
                     title="关键结果",
                     statement="当前分组和趋势结果可用于运营判断。",
-                    evidence_keys=keys,
+                    evidence_refs=references,
                 )
             ],
             recommendations=[],

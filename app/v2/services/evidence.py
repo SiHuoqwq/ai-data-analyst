@@ -15,7 +15,16 @@ EvidenceUnit = Literal[
 
 
 class ConclusionEvidenceError(ValueError):
-    pass
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        unknown_count: int = 0,
+    ):
+        super().__init__(message)
+        self.code = code
+        self.unknown_count = unknown_count
 
 
 @dataclass(frozen=True)
@@ -40,6 +49,82 @@ class EvidenceItem:
             "dimensions": self.dimensions,
             "sample_size": self.sample_size,
         }
+
+
+@dataclass(frozen=True)
+class EvidenceAliasEntry:
+    alias: str
+    item: EvidenceItem
+
+    def prompt_payload(self) -> dict[str, Any]:
+        return {
+            "alias": self.alias,
+            "label": self.item.label,
+            "display_value": self.item.display_value,
+            "unit": self.item.unit,
+            "dimensions": self.item.dimensions,
+            "sample_size": self.item.sample_size,
+        }
+
+
+class EvidenceAliasMap:
+    def __init__(self, run_id: str, entries: list[EvidenceAliasEntry]):
+        self.run_id = run_id
+        self.entries = tuple(entries)
+        self._by_alias = {entry.alias: entry.item for entry in entries}
+        self._alias_by_key = {
+            entry.item.key: entry.alias for entry in entries
+        }
+        if len(self._by_alias) != len(entries):
+            raise ValueError("evidence aliases must be unique")
+
+    def prompt_payload(self) -> list[dict[str, Any]]:
+        return [entry.prompt_payload() for entry in self.entries]
+
+    def alias_for_key(self, key: str) -> str:
+        try:
+            return self._alias_by_key[key]
+        except KeyError as exc:
+            raise ConclusionEvidenceError(
+                "UNKNOWN_EVIDENCE_REFERENCE",
+                "evidence key is not part of the current conclusion request",
+                unknown_count=1,
+            ) from exc
+
+    def validate_conclusion(
+        self,
+        conclusion: StructuredConclusion,
+    ) -> StructuredConclusion:
+        referenced = [
+            alias
+            for finding in conclusion.findings
+            for alias in finding.evidence_refs
+        ]
+        referenced.extend(
+            alias
+            for recommendation in conclusion.recommendations
+            for alias in recommendation.evidence_refs
+        )
+        unknown = sorted(
+            {alias for alias in referenced if alias not in self._by_alias}
+        )
+        if unknown:
+            raise ConclusionEvidenceError(
+                "UNKNOWN_EVIDENCE_REFERENCE",
+                "conclusion references evidence outside the current alias map",
+                unknown_count=len(unknown),
+            )
+        return conclusion
+
+    def get(self, alias: str) -> EvidenceItem:
+        try:
+            return self._by_alias[alias]
+        except KeyError as exc:
+            raise ConclusionEvidenceError(
+                "UNKNOWN_EVIDENCE_REFERENCE",
+                "evidence alias is not part of the current conclusion request",
+                unknown_count=1,
+            ) from exc
 
 
 class EvidenceRegistry:
@@ -129,26 +214,55 @@ class EvidenceRegistry:
         referenced = [
             key
             for finding in conclusion.findings
-            for key in finding.evidence_keys
+            for key in finding.evidence_refs
         ]
         referenced.extend(
             key
             for recommendation in conclusion.recommendations
-            for key in recommendation.evidence_keys
+            for key in recommendation.evidence_refs
         )
         unknown = sorted({key for key in referenced if key not in self._by_key})
         if unknown:
             raise ConclusionEvidenceError(
-                "conclusion references evidence outside the current run"
+                "UNKNOWN_EVIDENCE_REFERENCE",
+                "conclusion references evidence outside the current run",
+                unknown_count=len(unknown),
             )
         return conclusion
+
+    def create_alias_map(
+        self,
+        items: tuple[EvidenceItem, ...] | list[EvidenceItem],
+    ) -> EvidenceAliasMap:
+        selected = list(items)
+        if any(item.run_id != self.run_id for item in selected):
+            raise ConclusionEvidenceError(
+                "CROSS_RUN_EVIDENCE_REFERENCE",
+                "evidence belongs to a different run",
+            )
+        return EvidenceAliasMap(
+            self.run_id,
+            [
+                EvidenceAliasEntry(alias=f"e{index}", item=item)
+                for index, item in enumerate(selected, start=1)
+            ],
+        )
+
+    def validate_alias_map(self, aliases: EvidenceAliasMap) -> None:
+        if aliases.run_id != self.run_id:
+            raise ConclusionEvidenceError(
+                "CROSS_RUN_EVIDENCE_REFERENCE",
+                "evidence aliases belong to a different run",
+            )
 
     def get(self, key: str) -> EvidenceItem:
         try:
             return self._by_key[key]
         except KeyError as exc:
             raise ConclusionEvidenceError(
-                "evidence does not belong to the current run"
+                "UNKNOWN_EVIDENCE_REFERENCE",
+                "evidence does not belong to the current run",
+                unknown_count=1,
             ) from exc
 
     def prompt_payload(self) -> list[dict[str, Any]]:

@@ -18,7 +18,7 @@ def _narrative_without_numbers(value: str) -> str:
 class ConclusionFinding(StrictConclusionModel):
     title: str = Field(min_length=1, max_length=200)
     statement: str = Field(min_length=1, max_length=1000)
-    evidence_keys: list[str] = Field(min_length=1, max_length=20)
+    evidence_refs: list[str] = Field(min_length=1, max_length=20)
 
     _title_without_numbers = field_validator("title")(
         _narrative_without_numbers
@@ -31,7 +31,7 @@ class ConclusionFinding(StrictConclusionModel):
 class ConclusionRecommendation(StrictConclusionModel):
     action: str = Field(min_length=1, max_length=1000)
     reason: str = Field(min_length=1, max_length=1000)
-    evidence_keys: list[str] = Field(min_length=1, max_length=20)
+    evidence_refs: list[str] = Field(min_length=1, max_length=20)
 
     _action_without_numbers = field_validator("action")(
         _narrative_without_numbers

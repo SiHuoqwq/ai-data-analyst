@@ -40,14 +40,14 @@ def conclusion_for(keys: list[str]) -> StructuredConclusion:
                 {
                     "title": "主要发现",
                     "statement": "AI 应用课程完成表现偏弱。",
-                    "evidence_keys": keys,
+                    "evidence_refs": keys,
                 }
             ],
             "recommendations": [
                 {
                     "action": "增加分阶段学习提醒。",
                     "reason": "该课程类别需要重点运营。",
-                    "evidence_keys": keys[:1],
+                    "evidence_refs": keys[:1],
                 }
             ],
             "limitations": ["评分均值仅基于非空记录计算。"],
@@ -82,9 +82,11 @@ def test_conclusion_references_only_current_registry():
         item.key for item in registry.items if item.unit == "percentage"
     )
 
-    validated = registry.validate_conclusion(conclusion_for([key]))
+    aliases = registry.create_alias_map(registry.items)
+    alias = aliases.alias_for_key(key)
+    validated = aliases.validate_conclusion(conclusion_for([alias]))
 
-    assert validated.findings[0].evidence_keys == [key]
+    assert validated.findings[0].evidence_refs == [alias]
 
 
 def test_conclusion_rejects_unknown_or_other_run_evidence():
@@ -93,15 +95,25 @@ def test_conclusion_rejects_unknown_or_other_run_evidence():
         evidence_payload(),
     )
 
-    with pytest.raises(ConclusionEvidenceError):
-        registry.validate_conclusion(
-            conclusion_for(["evidence.run-other.a0.r0.f0"])
-        )
+    aliases = registry.create_alias_map(registry.items)
+
+    with pytest.raises(ConclusionEvidenceError) as unknown:
+        aliases.validate_conclusion(conclusion_for(["e999"]))
+    assert unknown.value.code == "UNKNOWN_EVIDENCE_REFERENCE"
+
+    other_registry = EvidenceRegistry.from_tool_evidence(
+        "run-other",
+        evidence_payload(),
+    )
+    other_aliases = other_registry.create_alias_map(other_registry.items)
+    with pytest.raises(ConclusionEvidenceError) as cross_run:
+        registry.validate_alias_map(other_aliases)
+    assert cross_run.value.code == "CROSS_RUN_EVIDENCE_REFERENCE"
 
 
 def test_conclusion_requires_evidence_for_each_finding():
     payload = conclusion_for(["placeholder"]).model_dump()
-    payload["findings"][0]["evidence_keys"] = []
+    payload["findings"][0]["evidence_refs"] = []
 
     with pytest.raises(ValidationError):
         StructuredConclusion.model_validate(payload)
@@ -125,15 +137,37 @@ def test_renderer_injects_values_without_internal_keys_or_uuids():
         for item in registry.items
         if item.unit in {"count", "percentage"}
     ]
-    conclusion = registry.validate_conclusion(conclusion_for(keys))
+    aliases = registry.create_alias_map(
+        [item for item in registry.items if item.key in keys]
+    )
+    conclusion = aliases.validate_conclusion(
+        conclusion_for([entry.alias for entry in aliases.entries])
+    )
 
     markdown = ConclusionMarkdownRenderer().render(
         conclusion,
-        registry,
+        aliases,
     )
 
     assert "# 课程运营表现" in markdown
     assert "153 人" in markdown
     assert "51.21%" in markdown
     assert "evidence." not in markdown
+    assert "e1" not in markdown
     assert "4a405bae-50e7-46ab-a195-9630d03736fb" not in markdown
+
+
+def test_compact_aliases_are_stable_and_bound_to_the_current_run():
+    registry = EvidenceRegistry.from_tool_evidence(
+        "run-current",
+        evidence_payload(),
+    )
+
+    first = registry.create_alias_map(registry.items[:2])
+    second = registry.create_alias_map(registry.items[:2])
+
+    assert [entry.alias for entry in first.entries] == ["e1", "e2"]
+    assert first.prompt_payload() == second.prompt_payload()
+    assert all("key" not in item for item in first.prompt_payload())
+    assert all("source_artifact_id" not in item for item in first.prompt_payload())
+    assert first.run_id == "run-current"

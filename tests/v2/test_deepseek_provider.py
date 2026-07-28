@@ -104,7 +104,7 @@ def conclusion_registry() -> EvidenceRegistry:
     )
 
 
-def valid_conclusion(key: str) -> str:
+def valid_conclusion(reference: str) -> str:
     return json.dumps(
         {
             "headline": "课程运营结论",
@@ -113,14 +113,14 @@ def valid_conclusion(key: str) -> str:
                 {
                     "title": "主要发现",
                     "statement": "该课程类别报名表现值得关注。",
-                    "evidence_keys": [key],
+                    "evidence_refs": [reference],
                 }
             ],
             "recommendations": [
                 {
                     "action": "持续跟踪课程运营表现。",
                     "reason": "当前结构化结果提供了可靠依据。",
-                    "evidence_keys": [key],
+                    "evidence_refs": [reference],
                 }
             ],
             "limitations": ["结论仅基于当前数据集。"],
@@ -131,13 +131,17 @@ def valid_conclusion(key: str) -> str:
 
 def test_deepseek_builds_grounded_conclusion_and_repairs_once():
     registry = conclusion_registry()
-    key = registry.items[0].key
     requests = []
-    responses = iter(("not-json", valid_conclusion(key)))
 
     def handler(request: httpx.Request) -> httpx.Response:
-        requests.append(json.loads(request.content))
-        return response(next(responses))
+        body = json.loads(request.content)
+        requests.append(body)
+        if len(requests) == 1:
+            return response("not-json")
+        payload = json.loads(body["messages"][1]["content"])
+        return response(
+            valid_conclusion(payload["evidence_registry"][0]["alias"])
+        )
 
     conclusion = provider_with(handler).build_conclusion(
         "分析课程表现",
@@ -145,7 +149,7 @@ def test_deepseek_builds_grounded_conclusion_and_repairs_once():
         registry,
     )
 
-    assert conclusion.findings[0].evidence_keys == [key]
+    assert conclusion.findings[0].evidence_refs == ["e1"]
     assert len(requests) == 2
     repair_payload = requests[1]["messages"][1]["content"]
     assert "artifact-private-id" not in repair_payload
@@ -203,12 +207,15 @@ def test_deepseek_bounds_large_conclusion_registry_across_sources():
         body = json.loads(request.content)
         captured["body"] = body
         payload = json.loads(body["messages"][1]["content"])
-        return response(valid_conclusion(payload["evidence_registry"][0]["key"]))
+        return response(
+            valid_conclusion(payload["evidence_registry"][0]["alias"])
+        )
 
-    conclusion = provider_with(
+    provider = provider_with(
         handler,
         max_prompt_chars=8_000,
-    ).build_conclusion(
+    )
+    conclusion = provider.build_conclusion(
         "分析多个来源的课程表现",
         file_record(),
         registry,
@@ -216,11 +223,12 @@ def test_deepseek_bounds_large_conclusion_registry_across_sources():
 
     user_content = captured["body"]["messages"][1]["content"]
     payload = json.loads(user_content)
-    included_keys = {
-        item["key"] for item in payload["evidence_registry"]
+    included_aliases = {
+        item["alias"] for item in payload["evidence_registry"]
     }
     included_sources = {
-        registry.get(key).source_artifact_id for key in included_keys
+        provider.last_conclusion_aliases.get(alias).source_artifact_id
+        for alias in included_aliases
     }
     assert len(user_content) <= 8_000
     assert included_sources == {
@@ -229,7 +237,83 @@ def test_deepseek_bounds_large_conclusion_registry_across_sources():
         "artifact-2",
         "artifact-3",
     }
-    assert conclusion.findings[0].evidence_keys[0] in included_keys
+    assert conclusion.findings[0].evidence_refs[0] in included_aliases
+
+
+def test_deepseek_records_sanitized_conclusion_validation_diagnostics():
+    registry = conclusion_registry()
+    requests = []
+    invalid = json.dumps(
+        {
+            "headline": "课程结论",
+            "overview": "课程完成率为百分之五十。",
+            "recommendations": [],
+            "limitations": [],
+        },
+        ensure_ascii=False,
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(json.loads(request.content))
+        return response(invalid)
+
+    with pytest.raises(ProviderError) as raised:
+        provider_with(handler).build_conclusion(
+            "分析课程表现",
+            file_record(),
+            registry,
+        )
+
+    diagnostics = raised.value.details["conclusion_diagnostics"]
+    assert len(requests) == 2
+    assert diagnostics[-1]["phase"] == "repair"
+    assert "MISSING_REQUIRED_FIELD" in diagnostics[-1]["error_types"]
+    assert diagnostics[-1]["field_paths"] == ["findings"]
+    assert diagnostics[-1]["response_length"] == len(invalid)
+    assert len(diagnostics[-1]["response_sha256"]) == 64
+    serialized = json.dumps(raised.value.details, ensure_ascii=False)
+    assert invalid not in serialized
+    assert "课程结论" not in serialized
+
+
+def test_deepseek_diagnoses_numbers_and_unknown_compact_references():
+    registry = conclusion_registry()
+    responses = iter(
+        (
+            json.dumps(
+                {
+                    "headline": "课程结论",
+                    "overview": "完成率为 50%。",
+                    "findings": [
+                        {
+                            "title": "主要发现",
+                            "statement": "完成表现偏低。",
+                            "evidence_refs": ["e999"],
+                        }
+                    ],
+                    "recommendations": [],
+                    "limitations": [],
+                },
+                ensure_ascii=False,
+            ),
+            valid_conclusion("e999"),
+        )
+    )
+
+    with pytest.raises(ProviderError) as raised:
+        provider_with(
+            lambda _request: response(next(responses))
+        ).build_conclusion(
+            "分析课程表现",
+            file_record(),
+            registry,
+        )
+
+    diagnostics = raised.value.details["conclusion_diagnostics"]
+    assert "NUMBER_IN_NARRATIVE" in diagnostics[0]["error_types"]
+    assert diagnostics[0]["narrative_number_token_count"] == 1
+    assert "UNKNOWN_EVIDENCE_REFERENCE" in diagnostics[1]["error_types"]
+    assert diagnostics[1]["unknown_reference_count"] == 1
 
 
 def test_deepseek_repairs_an_invalid_plan_at_most_once():

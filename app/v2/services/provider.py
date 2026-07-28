@@ -1,4 +1,5 @@
 import json
+import hashlib
 import re
 import time
 from dataclasses import dataclass
@@ -20,6 +21,7 @@ from app.v2.schemas.conclusions import (
 )
 from app.v2.services.evidence import (
     ConclusionEvidenceError,
+    EvidenceAliasMap,
     EvidenceRegistry,
 )
 from app.v2.services.structured_response import (
@@ -98,6 +100,9 @@ class FakeAnalysisProvider:
     def __init__(self, step_delay_seconds: float = 0):
         self.step_delay_seconds = step_delay_seconds
         self.history: list[dict[str, str]] = []
+        self.last_conclusion_aliases: EvidenceAliasMap | None = None
+        self.last_conclusion_mode = "model"
+        self.last_conclusion_diagnostics: list[dict[str, Any]] = []
 
     def set_history(self, history: list[dict[str, str]]) -> None:
         self.history = history
@@ -155,13 +160,16 @@ class FakeAnalysisProvider:
         file_record: FileModel,
         registry: EvidenceRegistry,
     ) -> StructuredConclusion:
-        keys = [item.key for item in registry.items]
-        if not keys:
+        if not registry.items:
             raise ProviderError(
                 "UNGROUNDED_ANSWER",
                 "本次分析没有可用于生成结论的结构化证据",
             )
-        primary = keys[: min(3, len(keys))]
+        aliases = registry.create_alias_map(
+            registry.items[: min(3, len(registry.items))]
+        )
+        self.last_conclusion_aliases = aliases
+        primary = [entry.alias for entry in aliases.entries]
         return StructuredConclusion(
             headline="数据概览结论",
             overview="本次结论由已完成的确定性分析步骤生成。",
@@ -169,14 +177,14 @@ class FakeAnalysisProvider:
                 ConclusionFinding(
                     title="关键数据已完成核验",
                     statement="当前数据集的主要结构化结果已生成。",
-                    evidence_keys=primary,
+                    evidence_refs=primary,
                 )
             ],
             recommendations=[
                 ConclusionRecommendation(
                     action="结合结构化结果继续检查重点分组",
                     reason="当前证据可作为后续分析的可靠起点",
-                    evidence_keys=primary,
+                    evidence_refs=primary,
                 )
             ],
             limitations=["测试分析模式不读取历史回答作为计算输入。"],
@@ -210,6 +218,9 @@ class DeepSeekProvider:
         self._structured_parser = StructuredResponseParser()
         self._client = client
         self._owns_client = client is None
+        self.last_conclusion_aliases: EvidenceAliasMap | None = None
+        self.last_conclusion_mode = "model"
+        self.last_conclusion_diagnostics: list[dict[str, Any]] = []
 
     def set_history(self, history: list[dict[str, str]]) -> None:
         self.history = self._limited_history(history)
@@ -504,21 +515,25 @@ class DeepSeekProvider:
         registry: EvidenceRegistry,
     ) -> StructuredConclusion:
         self._require_config()
+        self.last_conclusion_mode = "model"
+        self.last_conclusion_diagnostics = []
         payload = {
             "question": question[:4000],
             "dataset": self._safe_dataset_profile(file_record),
             "conclusion_schema": StructuredConclusion.model_json_schema(),
             "rules": [
                 "仅返回一个完整 JSON 对象",
-                "所有业务数字只能通过 evidence_keys 引用，不得写入叙述字段",
-                "每个 finding 和 recommendation 必须引用当前 evidence key",
+                "所有业务数字只能通过 evidence_refs 引用，不得写入叙述字段",
+                "每个 finding 和 recommendation 必须引用当前 evidence alias",
                 "不得输出文件路径、URL、内部 ID 或服务器信息",
             ],
         }
-        payload["evidence_registry"] = self._bounded_registry_payload(
+        aliases = self._bounded_alias_map(
             payload,
             registry,
         )
+        self.last_conclusion_aliases = aliases
+        payload["evidence_registry"] = aliases.prompt_payload()
         content = self._chat(
             [
                 {
@@ -533,38 +548,71 @@ class DeepSeekProvider:
             temperature=0.2,
         )
         try:
-            return self._validate_conclusion_response(content, registry)
+            return self._validate_conclusion_response(content, aliases)
         except (
             StructuredResponseError,
             ValidationError,
             ConclusionEvidenceError,
         ) as initial_error:
+            self.last_conclusion_diagnostics.append(
+                self._conclusion_diagnostic(
+                    "initial",
+                    content,
+                    initial_error,
+                )
+            )
             self._raise_if_cancelled()
             repaired = self._repair_conclusion_response(
-                content, initial_error, registry
+                content, initial_error, aliases
             )
             try:
-                return self._validate_conclusion_response(repaired, registry)
+                conclusion = self._validate_conclusion_response(
+                    repaired,
+                    aliases,
+                )
+                self.last_conclusion_mode = "repaired_model"
+                return conclusion
             except (
                 StructuredResponseError,
                 ValidationError,
                 ConclusionEvidenceError,
             ) as exc:
+                repair_diagnostic = self._conclusion_diagnostic(
+                    "repair",
+                    repaired,
+                    exc,
+                )
+                repair_diagnostic["error_types"] = sorted(
+                    {
+                        *repair_diagnostic["error_types"],
+                        "RESPONSE_REPAIR_FAILED",
+                    }
+                )
+                self.last_conclusion_diagnostics.append(repair_diagnostic)
                 raise ProviderError(
                     "UNGROUNDED_ANSWER",
                     "分析服务返回的结论无法由本次结构化证据验证",
                     retryable=False,
+                    details={
+                        "conclusion_diagnostics": (
+                            self.last_conclusion_diagnostics
+                        ),
+                        "answer_warnings": [
+                            "STRUCTURED_CONCLUSION_REJECTED",
+                            "STRUCTURED_CONCLUSION_REPAIR_FAILED",
+                        ],
+                    },
                 ) from exc
 
     def _validate_conclusion_response(
         self,
         content: str,
-        registry: EvidenceRegistry,
+        aliases: EvidenceAliasMap,
     ) -> StructuredConclusion:
         conclusion = StructuredConclusion.model_validate(
             self._structured_parser.parse_object(content)
         )
-        return registry.validate_conclusion(conclusion)
+        return aliases.validate_conclusion(conclusion)
 
     def _repair_conclusion_response(
         self,
@@ -574,12 +622,12 @@ class DeepSeekProvider:
             | ValidationError
             | ConclusionEvidenceError
         ),
-        registry: EvidenceRegistry,
+        aliases: EvidenceAliasMap,
     ) -> str:
         issues = (
             self._validation_issues(error)
             if isinstance(error, (StructuredResponseError, ValidationError))
-            else [{"location": ["evidence_keys"], "type": "unknown_evidence"}]
+            else [{"location": ["evidence_refs"], "type": error.code}]
         )
         payload = {
             "invalid_response_excerpt": self._safe_response_excerpt(content),
@@ -588,13 +636,10 @@ class DeepSeekProvider:
             "rules": [
                 "仅返回一个完整 JSON 对象",
                 "叙述字段不得包含数字",
-                "只能引用给定 evidence key",
+                "只能引用给定 evidence alias",
             ],
         }
-        payload["evidence_registry"] = self._bounded_registry_payload(
-            payload,
-            registry,
-        )
+        payload["evidence_registry"] = aliases.prompt_payload()
         return self._chat(
             [
                 {
@@ -756,11 +801,11 @@ class DeepSeekProvider:
             retryable=False,
         )
 
-    def _bounded_registry_payload(
+    def _bounded_alias_map(
         self,
         base_payload: dict[str, Any],
         registry: EvidenceRegistry,
-    ) -> list[dict[str, Any]]:
+    ) -> EvidenceAliasMap:
         groups: dict[str, list[Any]] = {}
         for item in registry.items:
             groups.setdefault(item.source_artifact_id, []).append(item)
@@ -777,17 +822,18 @@ class DeepSeekProvider:
                 break
             index += 1
 
-        selected: list[dict[str, Any]] = []
+        selected = []
         for item in ordered:
-            candidate = [*selected, item.prompt_payload()]
+            candidate_items = [*selected, item]
+            candidate = registry.create_alias_map(candidate_items)
             payload = {
                 **base_payload,
-                "evidence_registry": candidate,
+                "evidence_registry": candidate.prompt_payload(),
             }
             text = json.dumps(payload, ensure_ascii=False, allow_nan=False)
             if len(text) > self.max_prompt_chars:
                 break
-            selected = candidate
+            selected = candidate_items
 
         if not selected:
             raise ProviderError(
@@ -795,7 +841,119 @@ class DeepSeekProvider:
                 "分析请求超过当前上下文限制",
                 retryable=False,
             )
-        return selected
+        return registry.create_alias_map(selected)
+
+    @staticmethod
+    def _conclusion_diagnostic(
+        phase: str,
+        content: str,
+        error: (
+            StructuredResponseError
+            | ValidationError
+            | ConclusionEvidenceError
+        ),
+    ) -> dict[str, Any]:
+        error_types: set[str] = set()
+        field_paths: set[str] = set()
+        unknown_reference_count = 0
+        narrative_number_token_count = 0
+
+        if isinstance(error, StructuredResponseError):
+            error_types.add("INVALID_JSON")
+        elif isinstance(error, ConclusionEvidenceError):
+            error_types.add(error.code)
+            unknown_reference_count = error.unknown_count
+        else:
+            for item in error.errors(
+                include_url=False,
+                include_input=False,
+                include_context=False,
+            ):
+                location = ".".join(str(part) for part in item["loc"])
+                if location:
+                    field_paths.add(location)
+                issue_type = item["type"]
+                if issue_type == "missing":
+                    error_types.add("MISSING_REQUIRED_FIELD")
+                elif issue_type == "extra_forbidden":
+                    error_types.add("EXTRA_FIELD")
+                elif (
+                    item["loc"] == ("findings",)
+                    and issue_type in {"too_short", "list_too_short"}
+                ):
+                    error_types.add("EMPTY_FINDINGS")
+                elif (
+                    "evidence_refs" in item["loc"]
+                    and issue_type in {"too_short", "list_too_short"}
+                ):
+                    error_types.add(
+                        "FINDING_WITHOUT_EVIDENCE"
+                        if item["loc"][0] == "findings"
+                        else "RECOMMENDATION_WITHOUT_EVIDENCE"
+                    )
+                elif (
+                    issue_type == "value_error"
+                    and item["loc"]
+                    and item["loc"][-1]
+                    in {
+                        "headline",
+                        "overview",
+                        "title",
+                        "statement",
+                        "action",
+                        "reason",
+                        "limitations",
+                    }
+                ):
+                    error_types.add("NUMBER_IN_NARRATIVE")
+                else:
+                    error_types.add("INVALID_FIELD_TYPE")
+            if "NUMBER_IN_NARRATIVE" in error_types:
+                narrative_values: list[str] = []
+                try:
+                    parsed = json.loads(content)
+                except json.JSONDecodeError:
+                    parsed = {}
+
+                def collect_narrative(value: Any) -> None:
+                    if isinstance(value, dict):
+                        for key, nested in value.items():
+                            if key in {
+                                "headline",
+                                "overview",
+                                "title",
+                                "statement",
+                                "action",
+                                "reason",
+                                "limitations",
+                            }:
+                                collect_narrative(nested)
+                    elif isinstance(value, list):
+                        for nested in value:
+                            collect_narrative(nested)
+                    elif isinstance(value, str):
+                        narrative_values.append(value)
+
+                collect_narrative(parsed)
+                narrative_number_token_count = sum(
+                    len(re.findall(r"\d+", value))
+                    for value in narrative_values
+                )
+
+        return {
+            "phase": phase,
+            "error_types": sorted(error_types),
+            "field_paths": sorted(field_paths),
+            "error_count": (
+                len(error.errors()) if isinstance(error, ValidationError) else 1
+            ),
+            "unknown_reference_count": unknown_reference_count,
+            "narrative_number_token_count": narrative_number_token_count,
+            "response_length": len(content),
+            "response_sha256": hashlib.sha256(
+                content.encode("utf-8")
+            ).hexdigest(),
+        }
 
     @staticmethod
     def _parse_json(content: str) -> dict[str, Any]:

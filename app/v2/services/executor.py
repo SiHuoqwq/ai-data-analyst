@@ -317,9 +317,19 @@ class AnalysisExecutor:
                 conclusion = build_conclusion(
                     question, file_record, registry
                 )
-                registry.validate_conclusion(conclusion)
+                aliases = getattr(
+                    self.provider,
+                    "last_conclusion_aliases",
+                    None,
+                )
+                if aliases is None:
+                    raise RuntimeError(
+                        "conclusion provider did not bind evidence aliases"
+                    )
+                registry.validate_alias_map(aliases)
+                aliases.validate_conclusion(conclusion)
                 answer = ConclusionMarkdownRenderer().render(
-                    conclusion, registry
+                    conclusion, aliases
                 )
             else:
                 answer = self.provider.build_answer(
