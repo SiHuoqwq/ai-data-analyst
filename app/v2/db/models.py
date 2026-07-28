@@ -12,10 +12,10 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
-from sqlalchemy.orm import declarative_base
+from app.db.database import Base
 
 
-V2Base = declarative_base()
+V2Base = Base
 
 
 def utc_now() -> datetime.datetime:
