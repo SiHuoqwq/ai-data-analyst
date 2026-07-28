@@ -23,7 +23,7 @@ export function FileUploadZone({ busy, onUpload }: { busy: boolean; onUpload: (f
     <input ref={inputRef} id="dataset-file" type="file" accept=".csv,.xlsx" hidden
       onChange={(event) => void select(event.target.files?.[0])} />
     <UploadCloud size={28} aria-hidden="true" />
-    <div><strong>{busy ? '正在上传并生成数据画像' : '把数据文件放到这里'}</strong><p>支持 CSV 和 XLSX，不支持旧版 .xls</p></div>
+    <div><strong>{busy ? '正在上传并检查数据' : '将 CSV 或 XLSX 文件拖到这里'}</strong><p>支持 CSV、XLSX，不支持旧版 XLS</p></div>
     <Button type="button" disabled={busy} onClick={() => inputRef.current?.click()}><FileUp size={16} />{busy ? '上传中' : '选择文件'}</Button>
     {error && <p className="inline-error" role="alert">{error.message}</p>}
   </div>

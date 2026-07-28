@@ -10,7 +10,7 @@ import { formatNumber } from '../../utils/format'
 export function HistoryPage() {
   const datasets = useDatasets()
   return <div className="page">
-    <PageHeader eyebrow="历史记录" title="按数据集回到分析上下文" description="当前 V1 没有全局会话列表，因此这里不会伪造全局搜索或分页。" />
+    <PageHeader eyebrow="历史记录" title="回到之前的数据分析" description="选择一个数据集，查看与它相关的分析记录。" />
     {datasets.isPending && <LoadingState label="正在读取数据集" />}
     {datasets.isError && <ErrorState error={datasets.error} onRetry={() => void datasets.refetch()} />}
     {datasets.data?.length === 0 && <EmptyState title="暂无可浏览的历史" description="上传数据集并开始分析后，可从对应数据集查看已有会话。" />}

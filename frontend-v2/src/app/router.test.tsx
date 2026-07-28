@@ -22,9 +22,11 @@ describe('AppRoutes', () => {
     expect(screen.getByRole('link', { name: '返回工作区' })).toHaveAttribute('href', '/')
   })
 
-  it('分析路由展示真实占位说明而非虚假结果', () => {
+  it('分析路由展示用户友好的升级说明且不暴露工程术语', () => {
     renderRoute('/datasets/file-1/analysis')
-    expect(screen.getByText(/等待 V2 AnalysisRun 和 Artifact 协议/)).toBeInTheDocument()
-    expect(screen.queryByText(/正在分析/)).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '分析工作台正在升级' })).toBeInTheDocument()
+    expect(screen.getByText(/结构化结论、图表、表格和执行详情/)).toBeInTheDocument()
+    expect(screen.queryByText(/V2|AnalysisRun|Artifact/)).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('发送分析问题')).not.toBeInTheDocument()
   })
 })
