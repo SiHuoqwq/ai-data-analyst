@@ -524,7 +524,9 @@ class DeepSeekProvider:
     def _unsupported_numbers(
         cls, answer: str, evidence: list[dict[str, Any]]
     ) -> list[dict[str, str]]:
-        pattern = re.compile(r"(?<![\w-])-?\d+(?:,\d{3})*(?:\.\d+)?")
+        pattern = re.compile(
+            r"(?<![A-Za-z0-9_-])-?\d+(?:,\d{3})*(?:\.\d+)?"
+        )
         rate_markers = (
             "率",
             "比例",
