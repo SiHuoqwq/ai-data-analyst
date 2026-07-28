@@ -5,14 +5,14 @@
 当前实现提供一条不调用真实 LLM 的最小分析闭环：
 
 ```text
-提交分析问题
-→ 创建 queued AnalysisRun 和 run.started
+为 V1 文件创建 Conversation
+→ 提交分析问题
+→ 原子保存 user Message、queued AnalysisRun 和 run.started
 → Fake Provider 生成固定计划
 → 串行执行确定性数据检查与图表步骤
 → 保存 RunStep 和 text/metric/table/chart Artifact
-→ 保存最终助手消息
-→ AnalysisRun completed
-→ REST 查询最终状态，SSE 重放过程事件
+→ 原子保存最终 assistant Message 和 completed 终态
+→ REST 查询最终状态和会话历史，SSE 重放过程事件
 ```
 
 `/api/v1` 与 `/api/v2` 同时注册。V1 路由、旧 SSE 和 DeepSeek 代码保持原样；V2 默认且当前只允许 `FakeAnalysisProvider`。
@@ -93,6 +93,7 @@ Base path：`/api/v2`。
 
 | 方法 | 路径 | 用途 |
 |---|---|---|
+| `POST` | `/conversations` | 为现有 V1 文件创建 Conversation |
 | `POST` | `/conversations/{conversation_id}/runs` | 创建 Message 和 AnalysisRun |
 | `GET` | `/runs/{run_id}` | 查询 Run canonical 状态 |
 | `GET` | `/runs/{run_id}/steps` | 查询 RunStep |
@@ -147,6 +148,97 @@ Content-Type: application/json
 ```
 
 同一 Conversation 中，相同幂等键和相同请求返回同一 Run；相同键配合不同请求返回 `409 IDEMPOTENCY_CONFLICT`。
+
+## Conversation 与 Message 闭环
+
+### 创建 Conversation
+
+迁移期仍使用 V1 `files` 和 `conversations` 表。新上传文件尚无会话时，先调用：
+
+```http
+POST /api/v2/conversations
+Content-Type: application/json
+```
+
+```json
+{
+  "file_id": "existing-v1-file-id",
+  "title": "销售趋势分析"
+}
+```
+
+`title` 可省略或只包含空白，服务端使用稳定默认值 `新分析`。文件不存在时返回统一的 `404 DATASET_NOT_FOUND`。创建操作不会调用 Provider，也不会创建空的用户或助手消息。
+
+成功响应：
+
+```json
+{
+  "data": {
+    "id": "conversation-uuid",
+    "file_id": "existing-v1-file-id",
+    "title": "销售趋势分析",
+    "mode": "agent",
+    "created_at": "2026-07-28T12:00:00Z"
+  },
+  "meta": {
+    "request_id": "request-uuid",
+    "schema_version": "1.0"
+  }
+}
+```
+
+创建后可以通过现有 `GET /api/v1/conversations/{conversation_id}` 读取会话和消息。
+
+### Run 与消息关系
+
+0001 migration 已包含冻结合同定义的真实外键：
+
+- `trigger_message_id` 指向本次 Run 的 user Message；
+- `answer_message_id` 指向 completed Run 的 assistant Message。
+
+因此本轮没有增加重复的 `input_message_id` / `output_message_id` 数据库列。V2 API 保留合同字段，并额外返回以下兼容别名：
+
+- `input_message_id = trigger_message_id`
+- `output_message_id = answer_message_id`
+- `finished_at = completed_at`
+- `error = failure`
+
+提交分析问题时，user Message、queued AnalysisRun 和 `run.started` 在同一数据库事务中提交。事件创建或 Run 创建失败时，事务回滚，不留下孤儿 user Message。
+
+completed 时，最终回答保存为一条 assistant Message，并在同一终态事务中写入 `answer_message_id`、`answer.completed` 和 `run.completed`。Artifact payload 不写入助手正文，仍通过 Artifact API 查询。
+
+### 幂等、失败和取消
+
+- 相同 Conversation、Idempotency-Key 和相同请求返回原 Run 和原 user Message；
+- 幂等重放不会再次提交后台执行，不重复创建 assistant Message；
+- 相同 Key 对应不同请求返回 `409 IDEMPOTENCY_CONFLICT`，消息数量不变；
+- failed Run 保留 user Message，`answer_message_id`/`output_message_id` 为 null，不生成伪成功助手消息；
+- cancelled Run 采用相同规则，重复取消不增加消息；
+- 已生成的部分 Artifact 可按 Run 继续查询。
+
+### 同一 Conversation 多轮分析
+
+同一 Conversation 可以顺序创建多个 Run，消息历史保存为：
+
+```text
+user 1
+assistant 1
+user 2
+assistant 2
+```
+
+每个 Run 只引用自己的 trigger/answer Message，Artifact 继续按 `run_id` 隔离。当前 Fake Provider 不读取历史消息进行真正的上下文推理；本轮只保证历史、消息关系和运行证据正确持久化。
+
+前端未来的标准调用顺序：
+
+```text
+POST /api/v2/conversations
+POST /api/v2/conversations/{conversation_id}/runs
+GET  /api/v2/runs/{run_id}/events
+GET  /api/v2/runs/{run_id}
+GET  /api/v2/runs/{run_id}/artifacts
+GET  /api/v1/conversations/{conversation_id}
+```
 
 ## SSE
 
