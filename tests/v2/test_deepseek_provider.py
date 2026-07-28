@@ -217,6 +217,80 @@ def test_deepseek_rejects_rate_claim_using_unrelated_row_count():
     assert raised.value.code == "UNGROUNDED_ANSWER"
 
 
+def test_deepseek_accepts_reasonably_rounded_rate_and_amount_claims():
+    provider = provider_with(
+        lambda _request: response(
+            "平均完成率为 63.1%，平均实付金额为 ￥1,157.34。"
+        )
+    )
+
+    answer = provider.build_answer(
+        "汇总完成率和实付金额",
+        file_record(),
+        evidence=[
+            {
+                "artifact_id": "artifact-1",
+                "artifact_type": "table",
+                "title": "课程汇总",
+                "summary": {"row_count": 1},
+                "preview": [
+                    {
+                        "平均完成率": 0.6308301115,
+                        "平均实付金额": 1157.3406315789,
+                    }
+                ],
+            }
+        ],
+        history=[],
+    )
+
+    assert "63.1%" in answer
+    assert "1,157.34" in answer
+
+
+def test_deepseek_accepts_numbers_from_the_safe_dataset_profile():
+    provider = provider_with(
+        lambda _request: response("当前数据集共 120 行、7 列。")
+    )
+
+    answer = provider.build_answer(
+        "说明数据规模",
+        file_record(),
+        evidence=[],
+        history=[],
+    )
+
+    assert "120" in answer
+    assert "7" in answer
+
+
+def test_deepseek_accepts_quantile_evidence_displayed_as_percentage():
+    provider = provider_with(
+        lambda _request: response("筛选采用 75% 的报名量分位数。")
+    )
+
+    answer = provider.build_answer(
+        "说明筛选规则",
+        file_record(),
+        evidence=[
+            {
+                "artifact_id": "artifact-rule",
+                "artifact_type": "table",
+                "title": "低表现组合",
+                "summary": {
+                    "rule": {
+                        "high_volume_quantile": 0.75,
+                    }
+                },
+                "preview": [],
+            }
+        ],
+        history=[],
+    )
+
+    assert "75%" in answer
+
+
 def test_deepseek_retries_one_server_error_then_succeeds():
     calls = 0
 

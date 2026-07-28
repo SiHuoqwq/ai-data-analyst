@@ -310,7 +310,7 @@ class DeepSeekProvider:
             "evidence": limited_evidence,
             "answer_rules": [
                 "先给关键结论，再给数据依据、限制和运营建议",
-                "只能引用 evidence 中出现的数字和 artifact_id",
+                "只能引用 dataset、evidence 中出现的数字和 artifact_id",
                 "所有数值使用阿拉伯数字，不使用中文数字或模糊数量词",
                 "金额使用人民币格式，比例使用一致的百分比格式",
                 "样本量不足或字段缺失时必须说明",
@@ -336,7 +336,10 @@ class DeepSeekProvider:
                 "分析服务没有返回最终结论",
                 retryable=False,
             )
-        if not self._numbers_are_grounded(answer, limited_evidence):
+        if not self._numbers_are_grounded(
+            answer,
+            [{"dataset": payload["dataset"]}, *limited_evidence],
+        ):
             raise ProviderError(
                 "UNGROUNDED_ANSWER",
                 "分析结论包含无法由本次工具结果验证的数字",
@@ -515,6 +518,8 @@ class DeepSeekProvider:
             "rate",
             "completion",
             "refund",
+            "quantile",
+            "分位",
         )
         amount_markers = (
             "金额",
@@ -565,7 +570,12 @@ class DeepSeekProvider:
 
         collect(evidence)
         for match in pattern.finditer(answer):
-            number = float(match.group(0).replace(",", ""))
+            token = match.group(0).replace(",", "")
+            number = float(token)
+            decimal_places = (
+                len(token.rsplit(".", 1)[1]) if "." in token else 0
+            )
+            display_tolerance = 0.5 * (10 ** -decimal_places) + 1e-9
             following = answer[match.end() : match.end() + 2]
             context = answer[max(0, match.start() - 16) : match.start()].lower()
             if following.lstrip().startswith("%"):
@@ -584,7 +594,7 @@ class DeepSeekProvider:
                 candidates = allowed
             if not any(
                 abs(number - candidate)
-                <= max(1e-6, abs(candidate) * 1e-6)
+                <= max(1e-6, display_tolerance)
                 for candidate in candidates
             ):
                 return False
