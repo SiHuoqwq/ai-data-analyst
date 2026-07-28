@@ -35,3 +35,15 @@ def test_upgrade_downgrade_upgrade_preserves_v1_and_creates_v2_tables(tmp_path):
     command.upgrade(config, "head")
     assert expected_v1 | expected_v2 <= set(inspect(engine).get_table_names())
     engine.dispose()
+
+
+def test_alembic_database_url_environment_override(tmp_path, monkeypatch):
+    target = tmp_path / "environment-override.db"
+    database_url = f"sqlite:///{target.as_posix()}"
+    monkeypatch.setenv("ALEMBIC_DATABASE_URL", database_url)
+    config = alembic_config("sqlite:///Z:/path-that-must-not-be-used/app.db")
+
+    command.upgrade(config, "head")
+
+    assert target.is_file()
+    assert "analysis_runs" in inspect(create_engine(database_url)).get_table_names()

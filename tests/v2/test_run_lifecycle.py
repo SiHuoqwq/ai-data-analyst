@@ -2,8 +2,10 @@ import threading
 import time
 from pathlib import Path
 
+import pytest
+
 from app.db import database
-from app.db.models import MessageModel
+from app.db.models import FileModel, MessageModel
 from app.v2.db.models import (
     AnalysisRunModel,
     ArtifactModel,
@@ -22,6 +24,14 @@ def create_run(service: AnalysisRunService, key: str = "request-1"):
         message="请分析这份销售数据",
         idempotency_key=key,
     )
+
+
+def test_fake_provider_has_deterministic_failure_trigger(v2_runtime):
+    session = database.SessionLocal()
+    file_record = session.get(FileModel, "file-1")
+    with pytest.raises(RuntimeError, match="controlled fake provider failure"):
+        FakeAnalysisProvider().build_plan("[fake:fail]", file_record)
+    session.close()
 
 
 def test_fake_provider_completes_persisted_vertical_run(v2_runtime):

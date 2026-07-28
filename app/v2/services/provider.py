@@ -42,6 +42,8 @@ class FakeAnalysisProvider:
         self.step_delay_seconds = step_delay_seconds
 
     def build_plan(self, question: str, file_record: FileModel) -> ProviderPlan:
+        if question == "[fake:fail]":
+            raise RuntimeError("controlled fake provider failure")
         return ProviderPlan(
             goal=f"检查 {file_record.filename} 并生成可验证的数据摘要",
             steps=(

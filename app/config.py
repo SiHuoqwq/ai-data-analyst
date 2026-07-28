@@ -1,12 +1,15 @@
 import os
 
+from pydantic import Field
 from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    deepseek_api_key: str = ""
+    deepseek_api_key: str = Field(default="", repr=False)
     deepseek_base_url: str = "https://api.deepseek.com"
     llm_provider: str = "deepseek"
+    v2_provider: str = "fake"
+    v2_fake_step_delay_seconds: float = 0.0
     database_url: str = "sqlite:///./app.db"
     upload_dir: str = "./storage/uploads"
     chart_dir: str = "./storage/charts"
