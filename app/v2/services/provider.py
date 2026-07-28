@@ -507,7 +507,6 @@ class DeepSeekProvider:
         payload = {
             "question": question[:4000],
             "dataset": self._safe_dataset_profile(file_record),
-            "evidence_registry": registry.prompt_payload(),
             "conclusion_schema": StructuredConclusion.model_json_schema(),
             "rules": [
                 "仅返回一个完整 JSON 对象",
@@ -516,6 +515,10 @@ class DeepSeekProvider:
                 "不得输出文件路径、URL、内部 ID 或服务器信息",
             ],
         }
+        payload["evidence_registry"] = self._bounded_registry_payload(
+            payload,
+            registry,
+        )
         content = self._chat(
             [
                 {
@@ -581,7 +584,6 @@ class DeepSeekProvider:
         payload = {
             "invalid_response_excerpt": self._safe_response_excerpt(content),
             "validation_issues": issues,
-            "evidence_registry": registry.prompt_payload(),
             "conclusion_schema": StructuredConclusion.model_json_schema(),
             "rules": [
                 "仅返回一个完整 JSON 对象",
@@ -589,6 +591,10 @@ class DeepSeekProvider:
                 "只能引用给定 evidence key",
             ],
         }
+        payload["evidence_registry"] = self._bounded_registry_payload(
+            payload,
+            registry,
+        )
         return self._chat(
             [
                 {
@@ -749,6 +755,47 @@ class DeepSeekProvider:
             "分析请求超过当前上下文限制",
             retryable=False,
         )
+
+    def _bounded_registry_payload(
+        self,
+        base_payload: dict[str, Any],
+        registry: EvidenceRegistry,
+    ) -> list[dict[str, Any]]:
+        groups: dict[str, list[Any]] = {}
+        for item in registry.items:
+            groups.setdefault(item.source_artifact_id, []).append(item)
+
+        ordered = []
+        index = 0
+        while True:
+            added = False
+            for group in groups.values():
+                if index < len(group):
+                    ordered.append(group[index])
+                    added = True
+            if not added:
+                break
+            index += 1
+
+        selected: list[dict[str, Any]] = []
+        for item in ordered:
+            candidate = [*selected, item.prompt_payload()]
+            payload = {
+                **base_payload,
+                "evidence_registry": candidate,
+            }
+            text = json.dumps(payload, ensure_ascii=False, allow_nan=False)
+            if len(text) > self.max_prompt_chars:
+                break
+            selected = candidate
+
+        if not selected:
+            raise ProviderError(
+                "PROMPT_LIMIT_EXCEEDED",
+                "分析请求超过当前上下文限制",
+                retryable=False,
+            )
+        return selected
 
     @staticmethod
     def _parse_json(content: str) -> dict[str, Any]:

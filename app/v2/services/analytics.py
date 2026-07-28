@@ -43,6 +43,39 @@ def _wrapped_label(value: str, width: int = 14) -> str:
     )
 
 
+def _chart_alt_text(
+    title: str,
+    full_labels: list[str],
+    y_fields: list[str],
+    unit: str,
+    max_length: int = 500,
+) -> str:
+    prefix = f"{title}；完整分类："
+    suffix = f"；指标：{', '.join(y_fields)}；量纲：{unit}"
+    selected: list[str] = []
+    for label in full_labels:
+        candidate = selected + [label]
+        omitted = len(full_labels) - len(candidate)
+        omission = f"；其余 {omitted} 个组合见对应表格" if omitted else ""
+        text = f"{prefix}{'；'.join(candidate)}{omission}{suffix}"
+        if len(text) > max_length:
+            break
+        selected = candidate
+
+    if not selected and full_labels:
+        omission = (
+            f"；其余 {len(full_labels) - 1} 个组合见对应表格"
+            if len(full_labels) > 1
+            else ""
+        )
+        available = max_length - len(prefix) - len(omission) - len(suffix)
+        selected = [full_labels[0][: max(0, available)]]
+
+    omitted = len(full_labels) - len(selected)
+    omission = f"；其余 {omitted} 个组合见对应表格" if omitted else ""
+    return f"{prefix}{'；'.join(selected)}{omission}{suffix}"[:max_length]
+
+
 def _configure_chinese_font() -> str | None:
     preferred = {
         "Microsoft YaHei",
@@ -694,9 +727,11 @@ class StructuredAnalysisTools:
                     content_format="png",
                     chart_filepath=str(chart_path),
                     chart_type=validated["chart_type"],
-                    alt_text=(
-                        f"{title}；完整分类：{'；'.join(full_labels)}；"
-                        f"指标：{', '.join(y_fields)}；量纲：{unit}"
+                    alt_text=_chart_alt_text(
+                        title,
+                        full_labels,
+                        y_fields,
+                        unit,
                     ),
                 )
             )

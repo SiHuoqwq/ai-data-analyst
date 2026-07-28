@@ -171,6 +171,67 @@ def test_deepseek_rejects_conclusion_after_single_failed_repair():
     assert len(requests) == 2
 
 
+def test_deepseek_bounds_large_conclusion_registry_across_sources():
+    registry = EvidenceRegistry.from_tool_evidence(
+        "run-large",
+        [
+            {
+                "artifact_id": f"artifact-{artifact_index}",
+                "artifact_type": "table",
+                "source_tool": "group_aggregate",
+                "title": f"汇总表 {artifact_index}",
+                "summary": {},
+                "preview": [
+                    {
+                        "课程类别": (
+                            f"课程类别{artifact_index}-{row_index}-"
+                            "用于验证较长多维证据标签"
+                        ),
+                        "购买渠道": "短视频内容营销推广渠道",
+                        "报名人数": 100 + row_index,
+                        "平均完成率": 0.3 + row_index / 100,
+                    }
+                    for row_index in range(20)
+                ],
+            }
+            for artifact_index in range(4)
+        ],
+    )
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        captured["body"] = body
+        payload = json.loads(body["messages"][1]["content"])
+        return response(valid_conclusion(payload["evidence_registry"][0]["key"]))
+
+    conclusion = provider_with(
+        handler,
+        max_prompt_chars=8_000,
+    ).build_conclusion(
+        "分析多个来源的课程表现",
+        file_record(),
+        registry,
+    )
+
+    user_content = captured["body"]["messages"][1]["content"]
+    payload = json.loads(user_content)
+    included_keys = {
+        item["key"] for item in payload["evidence_registry"]
+    }
+    included_sources = {
+        registry.get(key).source_artifact_id for key in included_keys
+    }
+    assert len(user_content) <= 8_000
+    assert included_sources == {
+        "artifact-0",
+        "artifact-1",
+        "artifact-2",
+        "artifact-3",
+    }
+    assert conclusion.findings[0].evidence_keys[0] in included_keys
+
+
 def test_deepseek_repairs_an_invalid_plan_at_most_once():
     requests = []
     responses = iter(("not-json", valid_inspect_plan()))

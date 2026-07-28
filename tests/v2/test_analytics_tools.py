@@ -436,3 +436,95 @@ def test_chart_splits_mixed_units_and_keeps_multidimensional_labels(
     }
     assert all(Path(item.chart_filepath).is_file() for item in result.drafts)
     assert all(" / " in item.alt_text for item in result.drafts)
+
+
+def test_chart_alt_text_is_bounded_for_many_multidimensional_groups(
+    tmp_path, monkeypatch
+):
+    from app.config import settings
+
+    source_path = tmp_path / "many-groups.xlsx"
+    rows = [
+        {
+            "课程类别": f"人工智能应用与行业实践课程类别{i:02d}",
+            "课程难度": "高级综合实践",
+            "购买渠道": "短视频内容营销推广渠道",
+            "主要学习设备": "Android 平板与移动设备",
+            "课程完成率": 0.3 + i / 100,
+            "是否退款": i % 2 == 0,
+            "课程评分": 4 + i / 100,
+        }
+        for i in range(20)
+    ]
+    pd.DataFrame(rows).to_excel(source_path, index=False)
+    file_model = FileModel(
+        id="many-groups",
+        filename="many-groups.xlsx",
+        filepath=str(source_path),
+        file_type="xlsx",
+        row_count=20,
+        col_count=7,
+        columns_info=[],
+        profile_report="",
+    )
+    monkeypatch.setattr(settings, "chart_dir", str(tmp_path / "charts"))
+    tools = StructuredAnalysisTools()
+    source = tools.execute(
+        "group_aggregate",
+        {
+            "group_by": [
+                "课程类别",
+                "课程难度",
+                "购买渠道",
+                "主要学习设备",
+            ],
+            "metrics": [
+                {
+                    "field": "课程完成率",
+                    "aggregation": "mean",
+                    "alias": "平均完成率",
+                },
+                {
+                    "field": "课程评分",
+                    "aggregation": "mean",
+                    "alias": "平均课程评分",
+                },
+            ],
+            "filters": [],
+            "sort": [],
+            "limit": 100,
+        },
+        file_model,
+        {},
+    )
+
+    result = tools.execute(
+        "create_chart",
+        {
+            "source_step_id": "aggregate",
+            "chart_type": "bar",
+            "x_field": "课程类别",
+            "y_fields": ["平均完成率", "平均课程评分"],
+            "color_field": None,
+            "title": "多维课程组合表现",
+            "limit": 20,
+        },
+        file_model,
+        {"aggregate": source},
+    )
+
+    first_full_label = (
+        "人工智能应用与行业实践课程类别00 / 高级综合实践 / "
+        "短视频内容营销推广渠道 / Android 平板与移动设备"
+    )
+    first_row = source.drafts[0].payload["rows"][0]
+    assert " / ".join(
+        [
+            first_row["课程类别"],
+            first_row["课程难度"],
+            first_row["购买渠道"],
+            first_row["主要学习设备"],
+        ]
+    ) == first_full_label
+    assert all(len(item.alt_text) <= 500 for item in result.drafts)
+    assert all(first_full_label in item.alt_text for item in result.drafts)
