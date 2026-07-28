@@ -123,7 +123,7 @@ cd frontend && npm run dev
 
 ### 最小 V2 后端
 
-仓库同时包含一个只使用 Fake Provider 的最小 `/api/v2` 分析闭环。迁移、启动、API、SSE、合作式取消和 V1/V2 共存边界见 [最小 V2 后端运行说明](docs/v2/MINIMAL_V2_BACKEND.md)。
+仓库同时包含可切换 Fake/DeepSeek Provider 的 `/api/v2` 分析闭环。默认 Fake 模式不需要密钥；DeepSeek 模式通过白名单结构化计划调用 pandas 工具，并只基于聚合证据生成结论。迁移、启动、API、SSE、配置、安全边界和 V1/V2 共存说明见 [最小 V2 后端运行说明](docs/v2/MINIMAL_V2_BACKEND.md)。
 
 ## 使用流程
 

@@ -52,7 +52,7 @@ queued | running | completed | failed | cancelled
 | A-01 | 结构化图表 Schema 与前端渲染器边界如何定义？ | 持久化一个小型、中立、后端拥有的图表 Schema；前端适配具体渲染器。V1 静态 PNG 只作为兼容产物，不把任意 ECharts option 当可信持久化输入。具体采用 ECharts 还是 Vega-Lite 继续开放。 | `chart` Artifact Schema 与渲染组件实现前 |
 | A-05 | 结果验证最低标准是什么？ | 至少验证 Artifact Schema、字段引用、行列范围、有限数值、空结果解释和计划预期产物；关键结论必须可追溯到 RunStep 或 Artifact。 | 验证器实现前 |
 | D-04 | 最小敏感数据策略是什么？ | 默认不把完整原始表发送给模型，只发送 Schema、统计摘要和最小必要样本；日志、SSE 和错误不得包含整表或凭据。 | LLM 上下文组装前 |
-| M-01 | 首版 Provider 接口和默认模型如何配置？ | Provider 与模型由环境变量选择，不写入领域模型；Run 记录实际 provider、model、提示词版本和用量。 | LLM 适配层实现前 |
+| M-01 | 首版 Provider 接口和默认模型如何配置？ | 已决定并实现：`V2_PROVIDER=fake|deepseek`，默认 fake；模型和限制由环境变量设置，Run 记录实际 provider/model。提示词版本与用量字段仍待后续补充。 | 部分完成 |
 | M-03 | 最终答案的证据引用格式是什么？ | 关键数值和结论引用稳定 Artifact/RunStep ID，前端可定位证据。 | Answer Schema 实现前 |
 | R-02 | `Idempotency-Key` 的存储窗口和冲突规则是什么？ | 建议 24 小时；同键同请求返回原结果，同键不同请求返回冲突。 | 创建 Run API 实现前 |
 

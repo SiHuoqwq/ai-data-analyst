@@ -2,20 +2,23 @@
 
 ## 实现范围
 
-当前实现提供一条不调用真实 LLM 的最小分析闭环：
+当前实现提供两种可切换的 V2 分析闭环：
 
 ```text
 为 V1 文件创建 Conversation
 → 提交分析问题
 → 原子保存 user Message、queued AnalysisRun 和 run.started
-→ Fake Provider 生成固定计划
-→ 串行执行确定性数据检查与图表步骤
+→ Fake Provider 生成固定计划，或 DeepSeek 生成受限结构化计划
+→ 服务端校验白名单工具和严格参数
+→ pandas 执行分组、月度趋势和异常组合计算
+→ matplotlib 生成柱状图或折线图
 → 保存 RunStep 和 text/metric/table/chart Artifact
+→ Fake 返回固定结论，或 DeepSeek 仅根据本 Run 的结构化证据总结
 → 原子保存最终 assistant Message 和 completed 终态
 → REST 查询最终状态和会话历史，SSE 重放过程事件
 ```
 
-`/api/v1` 与 `/api/v2` 同时注册。V1 路由、旧 SSE 和 DeepSeek 代码保持原样；V2 默认且当前只允许 `FakeAnalysisProvider`。
+`/api/v1` 与 `/api/v2` 同时注册。V2 安全默认仍是 `FakeAnalysisProvider`；显式配置后可使用 `DeepSeekProvider`。自动测试始终使用 Fake 或 Mock HTTP Transport，不发起真实模型请求。
 
 ## 安全启动
 
@@ -58,7 +61,9 @@ python -m alembic upgrade head
 
 `downgrade base` 只删除上述 V2 表，保留 V1 的 `files`、`conversations`、`messages` 和 `charts`。
 
-## Fake Provider
+## Provider 配置
+
+### Fake 模式
 
 `.env` 配置：
 
@@ -67,25 +72,42 @@ V2_PROVIDER=fake
 V2_FAKE_STEP_DELAY_SECONDS=0
 ```
 
-当前 V2 不实现 DeepSeek Provider。把 `V2_PROVIDER` 设置为其他值会返回：
+Fake Provider 不读取 API Key、不访问外部网络。测试通过 FastAPI 依赖覆盖注入可控的慢速或失败 Provider，用于验证取消和失败路径；Mock 逻辑不在 API 路由中。
+
+真实 smoke test 可以临时设置 `V2_FAKE_STEP_DELAY_SECONDS=0.5`，制造可取消窗口。固定输入 `[fake:fail]` 只用于 Fake Provider 诊断，可确定地产生 failed Run；它不会进入其他 Provider。
+
+### DeepSeek 模式
+
+仅在人工验收时显式设置：
+
+```dotenv
+V2_PROVIDER=deepseek
+DEEPSEEK_API_KEY=replace-with-local-secret
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+DEEPSEEK_MODEL=deepseek-chat
+V2_LLM_TIMEOUT_SECONDS=75
+V2_LLM_MAX_RETRIES=1
+V2_MAX_TOOL_ROUNDS=5
+V2_MAX_PROMPT_CHARS=24000
+```
+
+缺少 API Key 时，创建 Run 前返回：
 
 ```json
 {
   "error": {
-    "code": "PROVIDER_NOT_AVAILABLE",
-    "message": "当前 V2 Provider 不可用",
-    "details": {
-      "configured_provider": "deepseek"
-    },
+    "code": "PROVIDER_NOT_CONFIGURED",
+    "message": "真实分析服务尚未配置 API Key",
+    "details": {},
     "retryable": false,
     "request_id": "..."
   }
 }
 ```
 
-Fake Provider 不读取 API Key、不访问外部网络。测试通过 FastAPI 依赖覆盖注入可控的慢速或失败 Provider，用于验证取消和失败路径；Mock 逻辑不在 API 路由中。
+网络超时和 5xx/429 最多按配置重试一次；401/403 不重试。工具调用总轮次受 `V2_MAX_TOOL_ROUNDS` 限制。字段错误时，Provider 最多在剩余轮次预算内修正一次，之后失败并持久化明确错误码。
 
-真实 smoke test 可以临时设置 `V2_FAKE_STEP_DELAY_SECONDS=0.5`，制造可取消窗口。固定输入 `[fake:fail]` 只用于 Fake Provider 诊断，可确定地产生 failed Run；它不会进入其他 Provider。
+发送给模型的内容只包含字段名、类型、缺失摘要、有限历史、聚合结果预览和 Artifact 引用；不发送完整数据集、文件物理路径、数据库连接、`.env` 或 API Key。日志不记录完整 Prompt、原始数据或完整模型响应。
 
 ## API
 
@@ -227,7 +249,7 @@ user 2
 assistant 2
 ```
 
-每个 Run 只引用自己的 trigger/answer Message，Artifact 继续按 `run_id` 隔离。当前 Fake Provider 不读取历史消息进行真正的上下文推理；本轮只保证历史、消息关系和运行证据正确持久化。
+每个 Run 只引用自己的 trigger/answer Message，Artifact 继续按 `run_id` 隔离。Fake Provider 不读取历史消息进行推理。DeepSeek 最多读取最近 10 条 user/assistant 消息，并受总字符限制；历史只帮助理解追问，所有数字仍需由本次 Run 的工具重新计算。
 
 前端未来的标准调用顺序：
 
@@ -294,23 +316,36 @@ API 和 SSE 不返回 `storage_key`、`./storage/...`、Windows 物理路径或�
 
 ## 已迁移的确定性能力
 
-当前 V2 适配并复用了：
+当前 V2 提供：
 
 - V1 CSV/XLSX parser；
-- pandas 数值字段与首个分类字段的确定性分组均值；
-- V1 matplotlib/seaborn 柱状图引擎；
+- 中英文数值、类别、日期字段识别及缺失摘要；
+- 严格 Pydantic 工具参数，拒绝未知字段、聚合方式、Python、SQL 和路径参数；
+- 多维分组的 count、sum、mean、min、max 和布尔比例；
+- 按月、按类别的多指标趋势统计；
+- 基于分位数和最小样本量的高报名低完成率组合识别；
+- 基于环比和首末变化的增长、下滑和波动信号；
+- 中文字体静态柱状图和折线图；
 - V1 文件、Conversation 和 Message 持久化。
 
-上述适配产生真实的 metric、table 和 chart Artifact，不把普通结果退化为单一 Markdown 字符串。
+上述工具产生真实的 metric、table 和 chart Artifact；DeepSeek 最终回答只接收这些结果的结构化证据，不允许把样例行猜测成全量结论。
 
 尚未迁移：
 
-- 其余 V1 统计、过滤、排序、趋势、异常检测工具；
+- 其余 V1 分布、相关性、IQR 异常值、散点图、热力图等工具；
 - 完整 AnalysisPlan revision 与 PlanValidator；
 - Dataset、DatasetVersion 的正式 V2 表和上传 API；
 - 结构化交互式图表 Schema；
-- DeepSeek V2 Provider；
 - 报告导出和完整报告管理。
+
+## 演示问题
+
+首轮工具覆盖以下两类自然语言问题及近似表达：
+
+1. 对课程类别、难度、购买渠道和学习设备做多维分组，比较完成率、退款率、评分和报名人数，识别高报名低完成率组合并生成表格与柱状图。
+2. 按月、按课程类别统计报名人数、实付金额和平均完成率，记录增长、下滑和波动规则并生成趋势表和折线图。
+
+模型负责选择字段和组织结论；所有统计值由 pandas 工具计算。当前不承诺任意开放式数据科学问题，也未迁移全部 V1 工具。
 
 ## 合作式取消
 
@@ -340,4 +375,4 @@ $env:PYTHONDONTWRITEBYTECODE = "1"
 python -m pytest -q
 ```
 
-测试全部使用临时 SQLite、匿名 CSV 和临时图表目录，不读取真实 `app.db`，不调用真实 LLM，不在仓库 storage 留下测试图片。
+测试全部使用临时 SQLite、匿名 CSV/XLSX、临时图表目录和 `httpx.MockTransport`，不读取真实 `app.db`，不调用真实 LLM，不在仓库 storage 留下测试图片。
