@@ -296,6 +296,37 @@ def test_deepseek_accepts_grounded_decimals_directly_after_chinese_text():
     assert "评分4.64" in answer
 
 
+def test_deepseek_keeps_numeric_semantics_within_structured_segments():
+    provider = provider_with(
+        lambda _request: response(
+            "完成率91.78% / 评分4.64 / 报名人数6。"
+        )
+    )
+
+    answer = provider.build_answer(
+        "说明完成率、评分和报名人数",
+        file_record(),
+        evidence=[
+            {
+                "artifact_id": "internal-artifact-id",
+                "artifact_type": "table",
+                "title": "课程汇总",
+                "summary": {"row_count": 1},
+                "preview": [
+                    {
+                        "平均完成率": 0.9178,
+                        "平均课程评分": 4.64,
+                        "报名人数": 6,
+                    }
+                ],
+            }
+        ],
+        history=[],
+    )
+
+    assert "完成率91.78% / 评分4.64 / 报名人数6" in answer
+
+
 def test_deepseek_accepts_numbers_from_the_safe_dataset_profile():
     provider = provider_with(
         lambda _request: response("当前数据集共 120 行、7 列。")

@@ -625,7 +625,7 @@ class DeepSeekProvider:
                 max(0, match.start() - 16) : match.start()
             ].lower()
             context = re.split(
-                r"[。！？!?；;，,\r\n]", raw_context
+                r"[。！？!?；;，,|/\\\r\n]", raw_context
             )[-1]
             if following.lstrip().startswith("%"):
                 candidates = allowed_rates
