@@ -95,6 +95,8 @@ def create_run(
             idempotency_key=idempotency_key,
             parent_run_id=body.parent_run_id,
             retry_of_run_id=body.retry_of_run_id,
+            provider_name=provider.name,
+            provider_model=provider.model,
         )
         run = result.run
     except RunServiceError as exc:

@@ -36,6 +36,8 @@ class AnalysisRunService:
         idempotency_key: str,
         parent_run_id: str | None = None,
         retry_of_run_id: str | None = None,
+        provider_name: str = "fake",
+        provider_model: str = "deterministic-v1",
     ) -> AnalysisRunModel:
         return self.create_run_result(
             conversation_id=conversation_id,
@@ -44,6 +46,8 @@ class AnalysisRunService:
             idempotency_key=idempotency_key,
             parent_run_id=parent_run_id,
             retry_of_run_id=retry_of_run_id,
+            provider_name=provider_name,
+            provider_model=provider_model,
         ).run
 
     def create_run_result(
@@ -54,6 +58,8 @@ class AnalysisRunService:
         idempotency_key: str,
         parent_run_id: str | None = None,
         retry_of_run_id: str | None = None,
+        provider_name: str = "fake",
+        provider_model: str = "deterministic-v1",
     ) -> RunCreationResult:
         session = SessionLocal()
         try:
@@ -79,6 +85,8 @@ class AnalysisRunService:
                 "dataset_version_id": resolved_version_id,
                 "parent_run_id": parent_run_id,
                 "retry_of_run_id": retry_of_run_id,
+                "provider": provider_name,
+                "model": provider_model,
             }
             request_hash = hashlib.sha256(
                 json.dumps(
@@ -134,8 +142,8 @@ class AnalysisRunService:
                 idempotency_key=idempotency_key,
                 request_hash=request_hash,
                 model_config_json={
-                    "provider": "fake",
-                    "model": "deterministic-v1",
+                    "provider": provider_name,
+                    "model": provider_model,
                     "schema_version": "1.0",
                 },
                 last_event_sequence=0,

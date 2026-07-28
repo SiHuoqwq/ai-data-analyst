@@ -49,7 +49,9 @@ def parse_sse(text: str) -> list[dict]:
     return events
 
 
-def test_provider_configuration_is_fake_only(monkeypatch):
+def test_provider_configuration_keeps_fake_and_rejects_unconfigured_deepseek(
+    monkeypatch,
+):
     if settings.deepseek_api_key:
         assert settings.deepseek_api_key not in repr(settings)
     monkeypatch.setattr(settings, "v2_provider", "fake")
@@ -59,9 +61,10 @@ def test_provider_configuration_is_fake_only(monkeypatch):
     assert provider.step_delay_seconds == 0.25
 
     monkeypatch.setattr(settings, "v2_provider", "deepseek")
+    monkeypatch.setattr(settings, "deepseek_api_key", "")
     with pytest.raises(V2APIError) as error:
         get_provider()
-    assert error.value.code == "PROVIDER_NOT_AVAILABLE"
+    assert error.value.code == "PROVIDER_NOT_CONFIGURED"
 
 
 def test_v2_success_api_and_sse_vertical_flow(v2_runtime):
