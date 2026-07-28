@@ -3,11 +3,13 @@ import { asAppError, normalizeError } from './errors'
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '')
 const TIMEOUT_MS = 12_000
 
+export const apiUrl = (path: string) => `${API_BASE_URL}${path}`
+
 export async function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
   const controller = new AbortController()
   const timeout = window.setTimeout(() => controller.abort(), TIMEOUT_MS)
   try {
-    const response = await fetch(`${API_BASE_URL}${path}`, {
+    const response = await fetch(apiUrl(path), {
       ...init,
       headers: { Accept: 'application/json', ...init.headers },
       signal: controller.signal,
