@@ -22,11 +22,10 @@ describe('AppRoutes', () => {
     expect(screen.getByRole('link', { name: '返回工作区' })).toHaveAttribute('href', '/')
   })
 
-  it('分析路由展示用户友好的升级说明且不暴露工程术语', () => {
+  it('分析路由进入真实工作台的数据恢复流程', () => {
     renderRoute('/datasets/file-1/analysis')
-    expect(screen.getByRole('heading', { name: '分析工作台正在升级' })).toBeInTheDocument()
-    expect(screen.getByText(/结构化结论、图表、表格和执行详情/)).toBeInTheDocument()
+    expect(screen.getByText('正在加载数据集')).toBeInTheDocument()
+    expect(screen.queryByText('分析工作台正在升级')).not.toBeInTheDocument()
     expect(screen.queryByText(/V2|AnalysisRun|Artifact/)).not.toBeInTheDocument()
-    expect(screen.queryByLabelText('发送分析问题')).not.toBeInTheDocument()
   })
 })

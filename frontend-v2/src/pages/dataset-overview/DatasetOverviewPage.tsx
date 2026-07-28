@@ -42,7 +42,7 @@ export function DatasetOverviewPage() {
     <Link className="back-link" to="/"><ArrowLeft size={15} />返回工作区</Link>
     <PageHeader eyebrow={`${data.file_type.toUpperCase()} 数据集`} title={data.filename}
       description={`${formatNumber(data.row_count)} 行 · ${formatNumber(data.col_count)} 列`}
-      actions={<><Button variant="secondary" onClick={() => setConfirming(true)}><Trash2 size={16} />删除</Button><div className="analysis-entry"><Button variant="secondary" onClick={() => navigate(`/datasets/${fileId}/analysis`)}>分析工作台</Button><span>即将开放</span></div></>} />
+      actions={<><Button variant="secondary" onClick={() => setConfirming(true)}><Trash2 size={16} />删除</Button><Button onClick={() => navigate(`/datasets/${fileId}/analysis`)}>分析工作台</Button></>} />
     <div className="metrics-grid">
       {([
         ['总行数', data.row_count, Rows3, '文件中的记录数量'],
