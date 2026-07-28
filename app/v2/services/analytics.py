@@ -23,6 +23,26 @@ TRUTHY = {"1", "true", "yes", "y", "是", "已退款", "退款"}
 FALSY = {"0", "false", "no", "n", "否", "未退款"}
 
 
+def _chart_unit(field: str) -> str:
+    normalized = field.lower()
+    if any(marker in normalized for marker in ("完成率", "退款率", "比例", "rate")):
+        return "percentage"
+    if any(marker in normalized for marker in ("金额", "收入", "销售额", "amount", "revenue")):
+        return "currency"
+    if any(marker in normalized for marker in ("评分", "得分", "score", "rating")):
+        return "score"
+    if any(marker in normalized for marker in ("人数", "数量", "记录数", "count")):
+        return "count"
+    return "number"
+
+
+def _wrapped_label(value: str, width: int = 14) -> str:
+    return "\n".join(
+        value[index : index + width]
+        for index in range(0, len(value), width)
+    )
+
+
 def _configure_chinese_font() -> str | None:
     preferred = {
         "Microsoft YaHei",
@@ -591,71 +611,104 @@ class StructuredAnalysisTools:
         if df.empty:
             raise ToolExecutionError("EMPTY_RESULT", "没有可绘制的数据")
 
-        fig, ax = plt.subplots(figsize=(10, 5.5))
         x_field = validated["x_field"]
         color_field = validated["color_field"]
-        if validated["chart_type"] == "bar":
-            x = range(len(df))
-            width = 0.8 / len(validated["y_fields"])
-            for index, y_field in enumerate(validated["y_fields"]):
-                values = pd.to_numeric(df[y_field], errors="coerce")
-                ax.bar(
-                    [item + index * width for item in x],
-                    values,
-                    width=width,
-                    label=y_field,
+        group_by = source.validated_input.get("group_by") or []
+        label_fields = [
+            field for field in group_by if field in df.columns
+        ]
+        full_labels = (
+            df[label_fields].astype(str).agg(" / ".join, axis=1)
+            if len(label_fields) > 1
+            else df[x_field].astype(str)
+        )
+        unit_groups: dict[str, list[str]] = {}
+        for y_field in validated["y_fields"]:
+            unit_groups.setdefault(_chart_unit(y_field), []).append(y_field)
+
+        drafts = []
+        for unit, y_fields in unit_groups.items():
+            fig, ax = plt.subplots(figsize=(10, 5.5))
+            if validated["chart_type"] == "bar":
+                x = range(len(df))
+                width = 0.8 / len(y_fields)
+                for index, y_field in enumerate(y_fields):
+                    values = pd.to_numeric(df[y_field], errors="coerce")
+                    ax.bar(
+                        [item + index * width for item in x],
+                        values,
+                        width=width,
+                        label=y_field,
+                    )
+                ax.set_xticks(
+                    [
+                        item + width * (len(y_fields) - 1) / 2
+                        for item in x
+                    ],
+                    [_wrapped_label(value) for value in full_labels],
+                    rotation=35,
+                    ha="right",
                 )
-            ax.set_xticks(
-                [item + width * (len(validated["y_fields"]) - 1) / 2 for item in x],
-                df[x_field].astype(str),
-                rotation=35,
-                ha="right",
-            )
-        else:
-            if color_field:
+            elif color_field:
                 for category, subset in df.groupby(color_field, dropna=False):
-                    for y_field in validated["y_fields"]:
+                    for y_field in y_fields:
                         ax.plot(
                             subset[x_field].astype(str),
                             pd.to_numeric(subset[y_field], errors="coerce"),
                             marker="o",
                             label=f"{category} · {y_field}",
                         )
+                ax.tick_params(axis="x", rotation=35)
             else:
-                for y_field in validated["y_fields"]:
+                for y_field in y_fields:
                     ax.plot(
                         df[x_field].astype(str),
                         pd.to_numeric(df[y_field], errors="coerce"),
                         marker="o",
                         label=y_field,
                     )
-            ax.tick_params(axis="x", rotation=35)
-        ax.set_title(validated["title"])
-        ax.set_xlabel(x_field)
-        ax.legend()
-        fig.tight_layout()
-        chart_root = Path(settings.chart_dir)
-        chart_root.mkdir(parents=True, exist_ok=True)
-        chart_path = chart_root / f"{uuid.uuid4()}.png"
-        fig.savefig(chart_path, dpi=150, bbox_inches="tight", facecolor="white")
-        plt.close(fig)
-        draft = ArtifactDraft(
-            artifact_type="chart",
-            title=validated["title"],
-            content_format="png",
-            chart_filepath=str(chart_path),
-            chart_type=validated["chart_type"],
-            alt_text=(
-                f"{validated['title']}，横轴为 {x_field}，"
-                f"纵轴为 {', '.join(validated['y_fields'])}"
-            ),
-        )
+                ax.tick_params(axis="x", rotation=35)
+            title = validated["title"]
+            if len(unit_groups) > 1:
+                title = f"{title}（{', '.join(y_fields)}）"
+            if len(source.dataframe) > validated["limit"]:
+                title = f"{title}，展示前 {validated['limit']} 项"
+            ax.set_title(title)
+            ax.set_xlabel(" / ".join(label_fields) if label_fields else x_field)
+            ax.legend()
+            fig.tight_layout()
+            chart_root = Path(settings.chart_dir)
+            chart_root.mkdir(parents=True, exist_ok=True)
+            chart_path = chart_root / f"{uuid.uuid4()}.png"
+            fig.savefig(
+                chart_path,
+                dpi=150,
+                bbox_inches="tight",
+                facecolor="white",
+            )
+            plt.close(fig)
+            drafts.append(
+                ArtifactDraft(
+                    artifact_type="chart",
+                    title=title,
+                    content_format="png",
+                    chart_filepath=str(chart_path),
+                    chart_type=validated["chart_type"],
+                    alt_text=(
+                        f"{title}；完整分类：{'；'.join(full_labels)}；"
+                        f"指标：{', '.join(y_fields)}；量纲：{unit}"
+                    ),
+                )
+            )
         summary = {
             "description": "已生成静态图表",
             "chart_type": validated["chart_type"],
             "source_step_id": validated["source_step_id"],
             "plotted_rows": len(df),
+            "unit_groups": {
+                unit: fields for unit, fields in unit_groups.items()
+            },
         }
         return ToolExecutionResult(
-            "success", summary, [], len(df), False, [], [draft], validated
+            "success", summary, [], len(df), False, [], drafts, validated
         )

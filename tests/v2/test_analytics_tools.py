@@ -379,3 +379,60 @@ def test_chart_tool_generates_managed_static_png(
     assert chart.chart_type == chart_type
     assert Path(chart.chart_filepath).is_file()
     assert Path(chart.chart_filepath).parent == Path(settings.chart_dir)
+
+
+def test_chart_splits_mixed_units_and_keeps_multidimensional_labels(
+    course_file, tmp_path, monkeypatch
+):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "chart_dir", str(tmp_path / "charts"))
+    tools = StructuredAnalysisTools()
+    source = tools.execute(
+        "group_aggregate",
+        {
+            "group_by": ["课程类别", "课程难度"],
+            "metrics": [
+                {"field": None, "aggregation": "count", "alias": "报名人数"},
+                {
+                    "field": "完成率",
+                    "aggregation": "mean",
+                    "alias": "平均完成率",
+                },
+                {
+                    "field": "课程评分",
+                    "aggregation": "mean",
+                    "alias": "平均课程评分",
+                },
+            ],
+            "filters": [],
+            "sort": [],
+            "limit": 20,
+        },
+        course_file,
+        {},
+    )
+
+    result = tools.execute(
+        "create_chart",
+        {
+            "source_step_id": "aggregate",
+            "chart_type": "bar",
+            "x_field": "课程类别",
+            "y_fields": ["报名人数", "平均完成率", "平均课程评分"],
+            "color_field": None,
+            "title": "课程组合表现",
+            "limit": 20,
+        },
+        course_file,
+        {"aggregate": source},
+    )
+
+    assert len(result.drafts) == 3
+    assert result.summary["unit_groups"] == {
+        "count": ["报名人数"],
+        "percentage": ["平均完成率"],
+        "score": ["平均课程评分"],
+    }
+    assert all(Path(item.chart_filepath).is_file() for item in result.drafts)
+    assert all(" / " in item.alt_text for item in result.drafts)

@@ -352,8 +352,8 @@ def test_same_conversation_supports_two_isolated_analysis_rounds(fake_client):
             f"/api/v2/runs/{second_run['id']}/artifacts"
         ).json()["data"]
     }
-    assert len(first_artifacts) == 4
-    assert len(second_artifacts) == 4
+    assert len(first_artifacts) == 5
+    assert len(second_artifacts) == 5
     assert first_artifacts.isdisjoint(second_artifacts)
 
 
