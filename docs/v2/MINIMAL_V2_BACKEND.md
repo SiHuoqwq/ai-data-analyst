@@ -171,9 +171,9 @@ data: {"event_id":"event-uuid","event_type":"artifact.created","run_id":"run-uui
 - `run.failed`
 - `run.cancelled`
 
-单个 Run 的持久业务事件 `sequence` 从 1 严格递增。支持 `after_sequence` 和 `Last-Event-ID` 重放。terminal Run 发送完持久事件后关闭连接。
+单个 Run 的所有事件（包括 `heartbeat`）使用同一持久化 `sequence`，从 1 严格递增。支持 `after_sequence` 和 `Last-Event-ID` 重放。terminal Run 发送完持久事件后关闭连接。
 
-`heartbeat` 每 15 秒最多发送一次，不写 `run_events`，也不占用业务 sequence；它只报告当前 `last_event_sequence`。本阶段不发送 `answer.delta`。
+`heartbeat` 每 15 秒最多持久化并发送一次，占用统一 sequence；多个订阅者复用同一事件序列。本阶段不发送 `answer.delta`。
 
 REST 与数据库是最终事实来源。页面刷新后应重新查询 Run、Steps 和 Artifacts，不应仅依赖内存中的 SSE 状态。
 

@@ -1,11 +1,13 @@
 import asyncio
 import json
 import time
-import uuid
+
+from sqlalchemy.exc import IntegrityError
 
 from app.db.database import SessionLocal
 from app.v2.db.models import AnalysisRunModel, RunEventModel, as_utc, utc_now
 from app.v2.schemas.events import EventEnvelope, HeartbeatPayload
+from app.v2.services.events import EventEmitter
 from app.v2.services.runs import RunServiceError
 
 
@@ -22,6 +24,36 @@ def _wire_event(envelope: EventEnvelope) -> str:
 
 
 class RunEventStream:
+    def emit_heartbeat(self, run_id: str) -> RunEventModel | None:
+        session = SessionLocal()
+        try:
+            run = session.get(AnalysisRunModel, run_id)
+            if not run or run.status in TERMINAL_STATUSES:
+                return None
+            now = utc_now()
+            if (
+                run.heartbeat_at
+                and (now - as_utc(run.heartbeat_at)).total_seconds() < 15
+            ):
+                return None
+            payload = HeartbeatPayload(
+                server_time=now.isoformat().replace("+00:00", "Z"),
+                last_event_sequence=run.last_event_sequence + 1,
+            ).model_dump(mode="json")
+            event = EventEmitter().emit(session, run, "heartbeat", payload)
+            run.heartbeat_at = now
+            session.commit()
+            session.refresh(event)
+            session.expunge(event)
+            return event
+        except IntegrityError:
+            # Another subscriber may have persisted the same interval heartbeat.
+            # Its event will be observed by this subscriber on the next poll.
+            session.rollback()
+            return None
+        finally:
+            session.close()
+
     def sequence_for_event(self, run_id: str, event_id: str) -> int:
         session = SessionLocal()
         try:
@@ -86,20 +118,19 @@ class RunEventStream:
                 return
 
             if not events and time.monotonic() - last_heartbeat >= 15:
-                now = utc_now()
-                payload = HeartbeatPayload(
-                    server_time=now.isoformat().replace("+00:00", "Z"),
-                    last_event_sequence=current_sequence,
-                ).model_dump(mode="json")
-                heartbeat = EventEnvelope(
-                    event_id=str(uuid.uuid4()),
-                    event_type="heartbeat",
-                    run_id=run_id,
-                    sequence=max(current_sequence, 1),
-                    timestamp=now,
-                    payload=payload,
-                )
-                yield _wire_event(heartbeat)
+                heartbeat = self.emit_heartbeat(run_id)
+                if heartbeat:
+                    envelope = EventEnvelope(
+                        event_id=heartbeat.id,
+                        event_type=heartbeat.event_type,
+                        run_id=heartbeat.run_id,
+                        sequence=heartbeat.sequence,
+                        timestamp=as_utc(heartbeat.created_at),
+                        schema_version=heartbeat.schema_version,
+                        payload=heartbeat.payload_json,
+                    )
+                    last_sequence = heartbeat.sequence
+                    yield _wire_event(envelope)
                 last_heartbeat = time.monotonic()
 
             await asyncio.sleep(0.05)

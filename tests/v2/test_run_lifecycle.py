@@ -1,3 +1,4 @@
+import datetime
 import threading
 import time
 from pathlib import Path
@@ -11,10 +12,12 @@ from app.v2.db.models import (
     ArtifactModel,
     RunEventModel,
     RunStepModel,
+    utc_now,
 )
 from app.v2.services.executor import AnalysisExecutor
 from app.v2.services.provider import FakeAnalysisProvider
 from app.v2.services.runs import AnalysisRunService
+from app.v2.services.streaming import RunEventStream
 
 
 def create_run(service: AnalysisRunService, key: str = "request-1"):
@@ -31,6 +34,37 @@ def test_fake_provider_has_deterministic_failure_trigger(v2_runtime):
     file_record = session.get(FileModel, "file-1")
     with pytest.raises(RuntimeError, match="controlled fake provider failure"):
         FakeAnalysisProvider().build_plan("[fake:fail]", file_record)
+    session.close()
+
+
+def test_heartbeat_consumes_a_persisted_strict_sequence(v2_runtime):
+    run = create_run(AnalysisRunService(), "heartbeat-sequence")
+    stream = RunEventStream()
+
+    first_heartbeat = stream.emit_heartbeat(run.id)
+    session = database.SessionLocal()
+    persisted_run = session.get(AnalysisRunModel, run.id)
+    persisted_run.heartbeat_at = utc_now() - datetime.timedelta(seconds=16)
+    session.commit()
+    session.close()
+    second_heartbeat = stream.emit_heartbeat(run.id)
+
+    session = database.SessionLocal()
+    events = (
+        session.query(RunEventModel)
+        .filter_by(run_id=run.id)
+        .order_by(RunEventModel.sequence)
+        .all()
+    )
+    assert first_heartbeat.sequence == 2
+    assert second_heartbeat.sequence == 3
+    assert [event.sequence for event in events] == [1, 2, 3]
+    assert [event.event_type for event in events] == [
+        "run.started",
+        "heartbeat",
+        "heartbeat",
+    ]
+    assert session.get(AnalysisRunModel, run.id).last_event_sequence == 3
     session.close()
 
 
