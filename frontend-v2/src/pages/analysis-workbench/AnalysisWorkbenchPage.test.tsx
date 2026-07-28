@@ -154,6 +154,13 @@ describe('AnalysisWorkbenchPage', () => {
     })
   })
 
+  it('uses provider-neutral analysis guidance', () => {
+    renderPage()
+
+    expect(screen.getByText(/结果由数据计算和分析流程生成/)).toBeInTheDocument()
+    expect(screen.queryByText(/测试分析模式/)).not.toBeInTheDocument()
+  })
+
   it('creates a conversation only on the first real submission, then creates a run', async () => {
     const user = userEvent.setup()
     renderPage()

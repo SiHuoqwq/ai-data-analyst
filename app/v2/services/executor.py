@@ -11,8 +11,13 @@ from app.v2.db.models import (
 )
 from app.v2.domain.state_machine import RunStatus, StepStatus, transition_run
 from app.v2.services.artifacts import ArtifactFactory
+from app.v2.services.analytics import (
+    StructuredAnalysisTools,
+    ToolExecutionError,
+    ToolExecutionResult,
+)
 from app.v2.services.events import EventEmitter
-from app.v2.services.provider import AnalysisProvider
+from app.v2.services.provider import AnalysisProvider, ProviderError
 from app.v2.services.runs import AnalysisRunService
 from app.v2.services.tools import V1DataToolAdapter
 
@@ -24,9 +29,11 @@ class AnalysisExecutor:
         tools: V1DataToolAdapter | None = None,
         artifacts: ArtifactFactory | None = None,
         events: EventEmitter | None = None,
+        structured_tools: StructuredAnalysisTools | None = None,
     ):
         self.provider = provider
         self.tools = tools or V1DataToolAdapter()
+        self.structured_tools = structured_tools or StructuredAnalysisTools()
         self.artifacts = artifacts or ArtifactFactory()
         self.events = events or EventEmitter()
         self.run_service = AnalysisRunService(self.events)
@@ -62,12 +69,54 @@ class AnalysisExecutor:
 
             file_record = session.get(FileModel, run.dataset_version_id)
             question = session.get(MessageModel, run.trigger_message_id).content
+            history = (
+                session.query(MessageModel)
+                .filter(
+                    MessageModel.conv_id == run.conversation_id,
+                    MessageModel.id != run.trigger_message_id,
+                )
+                .order_by(MessageModel.created_at.desc(), MessageModel.id.desc())
+                .limit(10)
+                .all()
+            )
+            history_context = [
+                {"role": item.role, "content": item.content}
+                for item in reversed(history)
+                if item.role in {"user", "assistant"}
+            ]
+            self.provider.set_history(history_context)
             plan = self.provider.build_plan(question, file_record)
+            expected_artifact_types: set[str] = set()
+            structured_outputs = {
+                "inspect_dataset": {"text", "metric"},
+                "group_aggregate": {"table"},
+                "monthly_trend": {"table"},
+                "identify_underperforming": {"table"},
+                "create_chart": {"chart"},
+            }
+            for planned_step in plan.steps:
+                if (
+                    planned_step.operation == "inspect_dataset"
+                    and planned_step.arguments is None
+                ):
+                    expected_artifact_types.update({"text", "metric", "table"})
+                elif planned_step.operation == "create_visualization":
+                    expected_artifact_types.add("chart")
+                else:
+                    expected_artifact_types.update(
+                        structured_outputs.get(planned_step.operation, set())
+                    )
             total_steps = len(plan.steps) + 2
             run.progress_json = {"completed_steps": 0, "total_steps": total_steps}
             session.commit()
 
             produced_ids: list[str] = []
+            evidence: list[dict] = []
+            prior_results: dict[str, ToolExecutionResult] = {}
+            tool_rounds = 0
+            max_tool_rounds = int(
+                getattr(self.provider, "max_tool_rounds", len(plan.steps) + 1)
+            )
             step_sequence = 0
             for provider_step in plan.steps:
                 if self._cancel_if_requested(session, run, active_step):
@@ -85,9 +134,73 @@ class AnalysisExecutor:
                     provider_step.display_name,
                     provider_step.step_id,
                     total_steps,
+                    provider_step.arguments,
                 )
                 started = time.monotonic()
-                if provider_step.operation == "inspect_dataset":
+                tool_result = None
+                if provider_step.arguments is not None:
+                    tool_rounds += 1
+                    if tool_rounds > max_tool_rounds:
+                        raise ProviderError(
+                            "TOOL_ROUND_LIMIT_EXCEEDED",
+                            "分析工具调用超过允许的轮次",
+                            retryable=False,
+                        )
+                    try:
+                        tool_result = self.structured_tools.execute(
+                            provider_step.operation,
+                            provider_step.arguments,
+                            file_record,
+                            prior_results,
+                        )
+                    except ToolExecutionError as tool_error:
+                        repair = getattr(self.provider, "repair_step", None)
+                        if not callable(repair) or tool_rounds >= max_tool_rounds:
+                            raise
+                        repaired_step = repair(
+                            question,
+                            file_record,
+                            {
+                                "step_id": provider_step.step_id,
+                                "operation": provider_step.operation,
+                                "arguments": provider_step.arguments,
+                            },
+                            {
+                                "code": tool_error.code,
+                                "message": tool_error.message,
+                                "details": tool_error.details,
+                            },
+                            evidence,
+                        )
+                        if self._cancel_if_requested(session, run, active_step):
+                            return
+                        if repaired_step is None:
+                            raise
+                        tool_rounds += 1
+                        active_step.attempt_count = 2
+                        active_step.max_attempts = 2
+                        active_step.operation = repaired_step.operation
+                        active_step.display_name = repaired_step.display_name
+                        active_step.input_json = {
+                            "schema_version": "1.0",
+                            "dataset_version_id": run.dataset_version_id,
+                            "arguments": repaired_step.arguments or {},
+                            "repaired_from": {
+                                "code": tool_error.code,
+                                "operation": provider_step.operation,
+                            },
+                        }
+                        active_step.updated_at = utc_now()
+                        session.commit()
+                        tool_result = self.structured_tools.execute(
+                            repaired_step.operation,
+                            repaired_step.arguments or {},
+                            file_record,
+                            prior_results,
+                        )
+                    prior_results[provider_step.step_id] = tool_result
+                    drafts = tool_result.drafts
+                elif provider_step.operation == "inspect_dataset":
                     drafts = self.tools.inspect(file_record)
                 else:
                     drafts = [self.tools.visualize(file_record)]
@@ -97,6 +210,35 @@ class AnalysisExecutor:
                 ]
                 session.flush()
                 produced_ids.extend(item.id for item in artifacts)
+                if tool_result is not None:
+                    result_evidence = tool_result.evidence()
+                    evidence.extend(
+                        {
+                            "artifact_id": artifact.id,
+                            "artifact_type": artifact.artifact_type,
+                            "title": artifact.title,
+                            **result_evidence,
+                        }
+                        for artifact in artifacts
+                    )
+                else:
+                    evidence.extend(
+                        {
+                            "artifact_id": artifact.id,
+                            "artifact_type": artifact.artifact_type,
+                            "title": artifact.title,
+                            "summary": {
+                                "row_count": artifact.row_count,
+                            },
+                            "preview": (
+                                artifact.payload_json.get("rows", [])[:20]
+                                if isinstance(artifact.payload_json, dict)
+                                else []
+                            ),
+                            "warnings": [],
+                        }
+                        for artifact in artifacts
+                    )
                 self._complete_step(
                     session,
                     run,
@@ -104,6 +246,7 @@ class AnalysisExecutor:
                     artifacts,
                     int((time.monotonic() - started) * 1000),
                     total_steps,
+                    tool_result,
                 )
                 active_step = None
 
@@ -119,6 +262,7 @@ class AnalysisExecutor:
                 "校验分析结果",
                 None,
                 total_steps,
+                None,
             )
             artifact_types = {
                 item[0]
@@ -126,7 +270,10 @@ class AnalysisExecutor:
                 .filter_by(run_id=run.id, status="ready")
                 .all()
             }
-            if artifact_types != {"text", "metric", "table", "chart"}:
+            if (
+                not expected_artifact_types
+                or not expected_artifact_types.issubset(artifact_types)
+            ):
                 raise RuntimeError("required artifacts missing")
             self._complete_step(
                 session, run, active_step, [], 0, total_steps
@@ -145,10 +292,13 @@ class AnalysisExecutor:
                 "生成最终回答",
                 None,
                 total_steps,
+                None,
             )
             answer = self.provider.build_answer(
-                question, file_record, produced_ids
+                question, file_record, evidence
             )
+            if self._cancel_if_requested(session, run, active_step):
+                return
             answer_message = MessageModel(
                 id=str(uuid.uuid4()),
                 conv_id=run.conversation_id,
@@ -196,7 +346,7 @@ class AnalysisExecutor:
                 },
             )
             session.commit()
-        except Exception:
+        except Exception as exc:
             session.rollback()
             run = session.get(AnalysisRunModel, run_id)
             if run and run.status not in {
@@ -204,19 +354,35 @@ class AnalysisExecutor:
                 RunStatus.FAILED.value,
                 RunStatus.CANCELLED.value,
             }:
+                if isinstance(exc, ProviderError):
+                    error_code = exc.code
+                    error_message = exc.user_message
+                    retryable = exc.retryable
+                    error_details = {}
+                elif isinstance(exc, ToolExecutionError):
+                    error_code = exc.code
+                    error_message = exc.message
+                    retryable = exc.retryable
+                    error_details = exc.details
+                else:
+                    error_code = "EXECUTION_FAILED"
+                    error_message = "分析执行失败"
+                    retryable = False
+                    error_details = {}
                 if active_step is not None:
                     active_step = session.get(RunStepModel, active_step.id)
                     active_step.status = StepStatus.FAILED.value
                     active_step.error_json = {
-                        "code": "EXECUTION_FAILED",
-                        "message": "分析步骤执行失败",
-                        "retryable": False,
+                        "code": error_code,
+                        "message": error_message,
+                        "details": error_details,
+                        "retryable": retryable,
                     }
                     active_step.finished_at = utc_now()
                 failure = {
-                    "code": "EXECUTION_FAILED",
-                    "message": "分析执行失败",
-                    "retryable": False,
+                    "code": error_code,
+                    "message": error_message,
+                    "retryable": retryable,
                     "failed_step_id": active_step.id if active_step else None,
                 }
                 run.status = RunStatus.FAILED.value
@@ -244,6 +410,9 @@ class AnalysisExecutor:
                 )
                 session.commit()
         finally:
+            close = getattr(self.provider, "close", None)
+            if callable(close):
+                close()
             session.close()
 
     def _start_step(
@@ -256,6 +425,7 @@ class AnalysisExecutor:
         display_name,
         plan_step_id,
         total_steps,
+        arguments=None,
     ):
         now = utc_now()
         run.current_phase = phase
@@ -272,6 +442,7 @@ class AnalysisExecutor:
             input_json={
                 "schema_version": "1.0",
                 "dataset_version_id": run.dataset_version_id,
+                "arguments": arguments or {},
             },
             attempt_count=1,
             max_attempts=1,
@@ -320,6 +491,7 @@ class AnalysisExecutor:
         artifacts,
         duration_ms,
         total_steps,
+        tool_result=None,
     ):
         now = utc_now()
         artifact_ids = [item.id for item in artifacts]
@@ -328,6 +500,10 @@ class AnalysisExecutor:
             "schema_version": "1.0",
             "description": step.display_name,
             "artifact_ids": artifact_ids,
+            "tool_result": tool_result.summary if tool_result else None,
+            "warnings": tool_result.warnings if tool_result else [],
+            "row_count": tool_result.row_count if tool_result else None,
+            "truncated": tool_result.truncated if tool_result else False,
         }
         step.finished_at = now
         step.updated_at = now

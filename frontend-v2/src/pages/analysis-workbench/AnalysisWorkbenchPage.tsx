@@ -416,7 +416,7 @@ export function AnalysisWorkbenchPage() {
         />
         <Button type="submit" disabled={!question.trim() || busy}><Send size={16} />开始分析</Button>
       </div>
-      <p>Enter 发送，Shift+Enter 换行 · 当前为测试分析模式，结果由确定性分析流程生成。</p>
+      <p>Enter 发送，Shift+Enter 换行 · 结果由数据计算和分析流程生成。</p>
     </form>
 
     <ExecutionDrawer open={drawerOpen} steps={steps.data ?? []} onClose={() => setDrawerOpen(false)} />
