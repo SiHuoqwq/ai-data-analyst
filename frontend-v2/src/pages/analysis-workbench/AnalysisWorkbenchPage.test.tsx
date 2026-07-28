@@ -333,6 +333,96 @@ describe('AnalysisWorkbenchPage', () => {
     expect(input).toHaveValue('第一行\n第二行')
     expect(createRun).not.toHaveBeenCalled()
   })
+
+  it('requests cancellation once and keeps the current question visible', async () => {
+    conversationData = {
+      id: 'conversation-1',
+      file_id: 'file-1',
+      title: '销售分析',
+      mode: 'agent',
+      created_at: '2026-07-28T10:00:00Z',
+      messages: [{ id: 'message-1', role: 'user', content: '分析销售数据', created_at: '2026-07-28T10:00:01Z' }],
+    }
+    runData = runningRun
+    cancelRun.mockResolvedValue({ ...runningRun, status: 'cancelled' })
+    const user = userEvent.setup()
+    renderPage('/datasets/file-1/analysis?conversationId=conversation-1&runId=run-1')
+
+    await user.click(screen.getByRole('button', { name: '取消分析' }))
+
+    await waitFor(() => expect(cancelRun).toHaveBeenCalledTimes(1))
+    expect(cancelRun).toHaveBeenCalledWith('run-1')
+    expect(screen.getByRole('heading', { name: '分析销售数据' })).toBeInTheDocument()
+  })
+
+  it('recovers persisted evidence through REST after an SSE disconnect', async () => {
+    conversationData = {
+      id: 'conversation-1',
+      file_id: 'file-1',
+      title: '销售分析',
+      mode: 'agent',
+      created_at: '2026-07-28T10:00:00Z',
+      messages: [{ id: 'message-1', role: 'user', content: '分析销售数据', created_at: '2026-07-28T10:00:01Z' }],
+    }
+    runData = runningRun
+    subscribe.mockResolvedValue('disconnected')
+    renderPage('/datasets/file-1/analysis?conversationId=conversation-1&runId=run-1')
+
+    expect(await screen.findByText('已通过服务器记录恢复当前结果')).toBeInTheDocument()
+  })
+
+  it('keeps multi-round history ordered while isolating the current result', () => {
+    conversationData = {
+      id: 'conversation-1',
+      file_id: 'file-1',
+      title: '销售分析',
+      mode: 'agent',
+      created_at: '2026-07-28T10:00:00Z',
+      messages: [
+        { id: 'user-1', role: 'user', content: '第一轮问题', created_at: '2026-07-28T10:00:01Z' },
+        { id: 'assistant-1', role: 'assistant', content: '第一轮结论', created_at: '2026-07-28T10:00:02Z' },
+        { id: 'message-1', role: 'user', content: '第二轮问题', created_at: '2026-07-28T10:00:03Z' },
+        { id: 'assistant-2', role: 'assistant', content: '第二轮结论', created_at: '2026-07-28T10:00:04Z' },
+      ],
+    }
+    runData = { ...runningRun, status: 'completed', output_message_id: 'assistant-2' }
+    artifactsData = [artifact('text', { format: 'markdown', content: '第二轮结论' })]
+    renderPage('/datasets/file-1/analysis?conversationId=conversation-1&runId=run-1')
+
+    const firstQuestion = screen.getByText('第一轮问题')
+    const firstAnswer = screen.getByText('第一轮结论')
+    expect(firstQuestion.compareDocumentPosition(firstAnswer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(screen.getByRole('heading', { name: '第二轮问题' })).toBeInTheDocument()
+    expect(screen.getAllByText('第二轮结论')).toHaveLength(1)
+  })
+
+  it('reuses the same idempotency key when retrying one failed network submission', async () => {
+    conversationData = {
+      id: 'conversation-1',
+      file_id: 'file-1',
+      title: '销售分析',
+      mode: 'agent',
+      created_at: '2026-07-28T10:00:00Z',
+      messages: [],
+    }
+    createRun
+      .mockRejectedValueOnce(new TypeError('network unavailable'))
+      .mockResolvedValueOnce({
+        message: { id: 'message-1', role: 'user', content_text: '分析销售数据', status: 'committed' },
+        run: { id: 'run-1', conversation_id: 'conversation-1', dataset_version_id: 'file-1', input_message_id: 'message-1', output_message_id: null, status: 'queued' },
+        events_url: '/api/v2/runs/run-1/events',
+      })
+    const user = userEvent.setup()
+    renderPage('/datasets/file-1/analysis?conversationId=conversation-1')
+    await user.type(screen.getByLabelText('输入分析问题'), '分析销售数据')
+
+    await user.click(screen.getByRole('button', { name: '开始分析' }))
+    await screen.findByText('操作没有完成')
+    await user.click(screen.getByRole('button', { name: '开始分析' }))
+
+    await waitFor(() => expect(createRun).toHaveBeenCalledTimes(2))
+    expect(createRun.mock.calls[0][0].idempotencyKey).toBe(createRun.mock.calls[1][0].idempotencyKey)
+  })
 })
 
 function artifact(artifactType: string, payload: Record<string, unknown>) {

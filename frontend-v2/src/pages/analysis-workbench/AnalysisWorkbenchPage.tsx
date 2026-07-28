@@ -87,7 +87,7 @@ function ConversationHistory({
   if (!history.length) return null
   return <section className="analysis-history" aria-labelledby="history-heading">
     <div className="workbench-section-heading">
-      <div><span className="eyebrow">之前的分析</span><h2 id="history-heading">会话记录</h2></div>
+      <div><span className="eyebrow">当前会话</span><h2 id="history-heading">会话记录</h2></div>
       <span>{history.length} 条消息</span>
     </div>
     <div className="history-ledger">
@@ -342,7 +342,7 @@ export function AnalysisWorkbenchPage() {
     </header>
 
     <main className="analysis-canvas">
-      {conversation.data?.messages && <ConversationHistory messages={conversation.data.messages} activeRun={run.data} />}
+      {!runId && conversation.data?.messages && <ConversationHistory messages={conversation.data.messages} activeRun={run.data} />}
 
       {!runId && <section className="analysis-welcome">
         <div><span>01</span><ChevronRight /></div>
@@ -391,6 +391,7 @@ export function AnalysisWorkbenchPage() {
           <Square /><div><strong>已取消</strong><p>本轮分析已停止，已经生成的结果会继续保留。</p></div>
         </div>}
       </section>}
+      {runId && conversation.data?.messages && <ConversationHistory messages={conversation.data.messages} activeRun={run.data} />}
     </main>
 
     {Boolean(submittingError) && <div className="workbench-error" role="alert">
