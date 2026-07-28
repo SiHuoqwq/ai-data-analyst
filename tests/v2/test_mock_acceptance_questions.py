@@ -3,12 +3,8 @@ from pathlib import Path
 from app.db import database
 from app.db.models import FileModel, MessageModel
 from app.v2.db.models import AnalysisRunModel, ArtifactModel
-from app.v2.schemas.conclusions import (
-    ConclusionFinding,
-    StructuredConclusion,
-)
 from app.v2.services.executor import AnalysisExecutor
-from app.v2.services.provider import ProviderPlan, ProviderStep
+from app.v2.services.provider import ProviderError, ProviderPlan, ProviderStep
 from app.v2.services.runs import AnalysisRunService
 
 
@@ -31,19 +27,41 @@ class AcceptanceProvider:
     def build_conclusion(self, _question, _file_record, registry):
         aliases = registry.create_alias_map(registry.items[:4])
         self.last_conclusion_aliases = aliases
-        references = [entry.alias for entry in aliases.entries]
-        return StructuredConclusion(
-            headline="模拟验收结论",
-            overview="结构化工具结果已完成核验。",
-            findings=[
-                ConclusionFinding(
-                    title="关键结果",
-                    statement="当前分组和趋势结果可用于运营判断。",
-                    evidence_refs=references,
-                )
-            ],
-            recommendations=[],
-            limitations=["此测试不调用外部模型。"],
+        raise ProviderError(
+            "UNGROUNDED_ANSWER",
+            "分析服务返回的结论无法由本次结构化证据验证",
+            retryable=False,
+            details={
+                "answer_warnings": [
+                    "STRUCTURED_CONCLUSION_REJECTED",
+                    "STRUCTURED_CONCLUSION_REPAIR_FAILED",
+                ],
+                "conclusion_diagnostics": [
+                    {
+                        "phase": "initial",
+                        "error_types": ["INVALID_JSON"],
+                        "field_paths": [],
+                        "error_count": 1,
+                        "unknown_reference_count": 0,
+                        "narrative_number_token_count": 0,
+                        "response_length": 8,
+                        "response_sha256": "a" * 64,
+                    },
+                    {
+                        "phase": "repair",
+                        "error_types": [
+                            "INVALID_JSON",
+                            "RESPONSE_REPAIR_FAILED",
+                        ],
+                        "field_paths": [],
+                        "error_count": 1,
+                        "unknown_reference_count": 0,
+                        "narrative_number_token_count": 0,
+                        "response_length": 8,
+                        "response_sha256": "b" * 64,
+                    },
+                ],
+            },
         )
 
 
@@ -164,12 +182,18 @@ def test_mock_first_and_second_acceptance_questions_complete(v2_runtime):
         item.failure_json for item in runs
     ]
     assert all(item.answer_message_id for item in runs)
-    assert (
+    messages = (
         session.query(MessageModel)
-        .filter_by(conv_id="conversation-1", role="assistant")
-        .count()
-        == 2
+        .filter_by(conv_id="conversation-1")
+        .order_by(MessageModel.created_at, MessageModel.id)
+        .all()
     )
+    assert [item.role for item in messages] == [
+        "user",
+        "assistant",
+        "user",
+        "assistant",
+    ]
     for run in runs:
         artifacts = (
             session.query(ArtifactModel).filter_by(run_id=run.id).all()
@@ -180,4 +204,21 @@ def test_mock_first_and_second_acceptance_questions_complete(v2_runtime):
             "text",
         }
         assert sum(item.artifact_type == "chart" for item in artifacts) == 3
+        answer_artifact = next(
+            item
+            for item in artifacts
+            if item.artifact_type == "text" and item.title == "分析结论"
+        )
+        assert (
+            answer_artifact.payload_json["answer_mode"]
+            == "deterministic_fallback"
+        )
+        assert "## 关键结果" in answer_artifact.payload_json["content"]
+
+    first_answer = session.get(MessageModel, runs[0].answer_message_id)
+    second_answer = session.get(MessageModel, runs[1].answer_message_id)
+    assert "50.00%" in first_answer.content
+    assert "¥299.00" in second_answer.content
+    assert "2025-01" in second_answer.content
+    assert "2025-02" in second_answer.content
     session.close()

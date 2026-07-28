@@ -1,9 +1,19 @@
 from app.db import database
 from app.db.models import MessageModel
-from app.v2.db.models import AnalysisRunModel, ArtifactModel, RunStepModel, utc_now
+from app.v2.db.models import (
+    AnalysisRunModel,
+    ArtifactModel,
+    RunEventModel,
+    RunStepModel,
+    utc_now,
+)
 import threading
 
 from app.v2.services.executor import AnalysisExecutor
+from app.v2.schemas.conclusions import (
+    ConclusionFinding,
+    StructuredConclusion,
+)
 from app.v2.services.provider import (
     ProviderError,
     ProviderPlan,
@@ -122,7 +132,7 @@ def test_executor_runs_structured_plan_and_passes_artifact_evidence(v2_runtime):
     artifacts = session.query(ArtifactModel).filter_by(run_id=run.id).all()
     answer = session.get(MessageModel, completed.answer_message_id)
 
-    assert completed.status == "completed"
+    assert completed.status == "completed", completed.failure_json
     final_text = next(
         item
         for item in artifacts
@@ -291,6 +301,193 @@ def test_executor_persists_sanitized_provider_error_details(v2_runtime):
             }
         ]
     }
+    session.close()
+
+
+def test_executor_completes_with_deterministic_answer_after_conclusion_repair_fails(
+    v2_runtime,
+):
+    class RejectedConclusionProvider(ScriptedRealProvider):
+        def build_conclusion(self, _question, _file_record, registry):
+            self.last_conclusion_aliases = registry.create_alias_map(
+                registry.items[:4]
+            )
+            raise ProviderError(
+                "UNGROUNDED_ANSWER",
+                "分析服务返回的结论无法由本次结构化证据验证",
+                retryable=False,
+                details={
+                    "conclusion_diagnostics": [
+                        {
+                            "phase": "initial",
+                            "error_types": ["INVALID_JSON"],
+                            "field_paths": [],
+                            "error_count": 1,
+                            "unknown_reference_count": 0,
+                            "narrative_number_token_count": 0,
+                            "response_length": 8,
+                            "response_sha256": "a" * 64,
+                        },
+                        {
+                            "phase": "repair",
+                            "error_types": [
+                                "INVALID_JSON",
+                                "RESPONSE_REPAIR_FAILED",
+                            ],
+                            "field_paths": [],
+                            "error_count": 1,
+                            "unknown_reference_count": 0,
+                            "narrative_number_token_count": 0,
+                            "response_length": 8,
+                            "response_sha256": "b" * 64,
+                        },
+                    ],
+                    "answer_warnings": [
+                        "STRUCTURED_CONCLUSION_REJECTED",
+                        "STRUCTURED_CONCLUSION_REPAIR_FAILED",
+                    ],
+                },
+            )
+
+    run = create_run("请按类别汇总销售额", "fallback-success")
+    AnalysisExecutor(RejectedConclusionProvider()).execute(run.id)
+
+    session = database.SessionLocal()
+    completed = session.get(AnalysisRunModel, run.id)
+    answer_step = (
+        session.query(RunStepModel)
+        .filter_by(run_id=run.id, operation="generate_answer")
+        .one()
+    )
+    final_text = (
+        session.query(ArtifactModel)
+        .filter_by(
+            run_id=run.id,
+            artifact_type="text",
+            title="分析结论",
+        )
+        .one()
+    )
+    answer = session.get(MessageModel, completed.answer_message_id)
+    event_types = [
+        item[0]
+        for item in session.query(RunEventModel.event_type)
+        .filter_by(run_id=run.id)
+        .all()
+    ]
+
+    assert completed.status == "completed", completed.failure_json
+    assert final_text.payload_json["answer_mode"] == "deterministic_fallback"
+    assert final_text.payload_json["answer_warnings"] == [
+        "STRUCTURED_CONCLUSION_REJECTED",
+        "STRUCTURED_CONCLUSION_REPAIR_FAILED",
+    ]
+    assert final_text.payload_json["content"] == answer.content
+    assert "## 分析概览" in answer.content
+    assert "## 关键结果" in answer.content
+    assert "## 运营建议" in answer.content
+    assert "## 数据限制" in answer.content
+    assert "¥250.00" in answer.content
+    assert answer_step.output_summary_json["answer_mode"] == (
+        "deterministic_fallback"
+    )
+    assert answer_step.output_summary_json["conclusion_diagnostics"][0][
+        "error_types"
+    ] == ["INVALID_JSON"]
+    assert "answer.completed" in event_types
+    assert "run.completed" in event_types
+    assert "run.failed" not in event_types
+    session.close()
+
+
+def test_executor_does_not_fallback_after_cancellation_during_conclusion(
+    v2_runtime,
+):
+    run = create_run("取消最终结论", "fallback-cancel")
+
+    class CancellingConclusionProvider(ScriptedRealProvider):
+        def build_conclusion(self, _question, _file_record, registry):
+            self.last_conclusion_aliases = registry.create_alias_map(
+                registry.items[:2]
+            )
+            AnalysisRunService().request_cancel(run.id, "user_requested")
+            raise ProviderError(
+                "UNGROUNDED_ANSWER",
+                "分析服务返回的结论无法验证",
+                retryable=False,
+            )
+
+    AnalysisExecutor(CancellingConclusionProvider()).execute(run.id)
+
+    session = database.SessionLocal()
+    cancelled = session.get(AnalysisRunModel, run.id)
+    assert cancelled.status == "cancelled"
+    assert cancelled.answer_message_id is None
+    assert (
+        session.query(ArtifactModel)
+        .filter_by(run_id=run.id, title="分析结论")
+        .count()
+        == 0
+    )
+    session.close()
+
+
+def test_executor_persists_model_and_repaired_model_answer_modes(v2_runtime):
+    class ValidConclusionProvider(ScriptedRealProvider):
+        def __init__(self, mode):
+            super().__init__()
+            self.last_conclusion_mode = mode
+            self.last_conclusion_diagnostics = (
+                [{"phase": "initial", "error_types": ["INVALID_JSON"]}]
+                if mode == "repaired_model"
+                else []
+            )
+
+        def build_conclusion(self, _question, _file_record, registry):
+            aliases = registry.create_alias_map(registry.items[:2])
+            self.last_conclusion_aliases = aliases
+            return StructuredConclusion(
+                headline="可信结论",
+                overview="结果已由结构化证据验证。",
+                findings=[
+                    ConclusionFinding(
+                        title="关键结果",
+                        statement="分组结果可以支持后续判断。",
+                        evidence_refs=[
+                            entry.alias for entry in aliases.entries
+                        ],
+                    )
+                ],
+                recommendations=[],
+                limitations=[],
+            )
+
+    session = database.SessionLocal()
+    modes = []
+    for index, expected_mode in enumerate(("model", "repaired_model")):
+        run = create_run(
+            f"验证 {expected_mode}",
+            f"answer-mode-{index}",
+        )
+        AnalysisExecutor(ValidConclusionProvider(expected_mode)).execute(
+            run.id
+        )
+        artifact = (
+            session.query(ArtifactModel)
+            .filter_by(
+                run_id=run.id,
+                artifact_type="text",
+                title="分析结论",
+            )
+            .one()
+        )
+        modes.append(artifact.payload_json["answer_mode"])
+        if expected_mode == "repaired_model":
+            assert artifact.payload_json["answer_warnings"] == [
+                "STRUCTURED_CONCLUSION_REJECTED"
+            ]
+
+    assert modes == ["model", "repaired_model"]
     session.close()
 
 

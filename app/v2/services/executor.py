@@ -18,6 +18,9 @@ from app.v2.services.analytics import (
 )
 from app.v2.services.events import EventEmitter
 from app.v2.services.evidence import EvidenceRegistry
+from app.v2.services.deterministic_renderer import (
+    DeterministicGroundedAnswerRenderer,
+)
 from app.v2.services.markdown_renderer import ConclusionMarkdownRenderer
 from app.v2.services.provider import AnalysisProvider, ProviderError
 from app.v2.services.runs import AnalysisRunService
@@ -125,6 +128,7 @@ class AnalysisExecutor:
 
             produced_ids: list[str] = []
             evidence: list[dict] = []
+            registry_evidence: list[dict] = []
             prior_results: dict[str, ToolExecutionResult] = {}
             tool_rounds = 0
             max_tool_rounds = int(
@@ -225,6 +229,9 @@ class AnalysisExecutor:
                 produced_ids.extend(item.id for item in artifacts)
                 if tool_result is not None:
                     result_evidence = tool_result.evidence()
+                    complete_result_evidence = tool_result.evidence(
+                        complete=True
+                    )
                     evidence.extend(
                         {
                             "artifact_id": artifact.id,
@@ -232,6 +239,16 @@ class AnalysisExecutor:
                             "title": artifact.title,
                             "source_tool": provider_step.operation,
                             **result_evidence,
+                        }
+                        for artifact in artifacts
+                    )
+                    registry_evidence.extend(
+                        {
+                            "artifact_id": artifact.id,
+                            "artifact_type": artifact.artifact_type,
+                            "title": artifact.title,
+                            "source_tool": provider_step.operation,
+                            **complete_result_evidence,
                         }
                         for artifact in artifacts
                     )
@@ -250,6 +267,26 @@ class AnalysisExecutor:
                                 if isinstance(artifact.payload_json, dict)
                                 else []
                             ),
+                            "warnings": [],
+                        }
+                        for artifact in artifacts
+                    )
+                    registry_evidence.extend(
+                        {
+                            "artifact_id": artifact.id,
+                            "artifact_type": artifact.artifact_type,
+                            "title": artifact.title,
+                            "source_tool": provider_step.operation,
+                            "summary": {
+                                "row_count": artifact.row_count,
+                            },
+                            "preview": (
+                                artifact.payload_json.get("rows", [])
+                                if isinstance(artifact.payload_json, dict)
+                                else []
+                            ),
+                            "row_count": artifact.row_count or 0,
+                            "truncated": False,
                             "warnings": [],
                         }
                         for artifact in artifacts
@@ -309,28 +346,81 @@ class AnalysisExecutor:
                 total_steps,
                 None,
             )
-            registry = EvidenceRegistry.from_tool_evidence(run.id, evidence)
+            registry = EvidenceRegistry.from_tool_evidence(
+                run.id, registry_evidence
+            )
+            if not registry.items:
+                raise RuntimeError("validated analysis produced no evidence")
+            answer_mode = "model"
+            answer_warnings: list[str] = []
+            conclusion_diagnostics: list[dict] = []
             build_conclusion = getattr(
                 self.provider, "build_conclusion", None
             )
             if callable(build_conclusion):
-                conclusion = build_conclusion(
-                    question, file_record, registry
-                )
-                aliases = getattr(
-                    self.provider,
-                    "last_conclusion_aliases",
-                    None,
-                )
-                if aliases is None:
-                    raise RuntimeError(
-                        "conclusion provider did not bind evidence aliases"
+                try:
+                    conclusion = build_conclusion(
+                        question, file_record, registry
                     )
-                registry.validate_alias_map(aliases)
-                aliases.validate_conclusion(conclusion)
-                answer = ConclusionMarkdownRenderer().render(
-                    conclusion, aliases
-                )
+                    aliases = getattr(
+                        self.provider,
+                        "last_conclusion_aliases",
+                        None,
+                    )
+                    if aliases is None:
+                        raise RuntimeError(
+                            "conclusion provider did not bind evidence aliases"
+                        )
+                    registry.validate_alias_map(aliases)
+                    aliases.validate_conclusion(conclusion)
+                    answer = ConclusionMarkdownRenderer().render(
+                        conclusion, aliases
+                    )
+                    answer_mode = getattr(
+                        self.provider,
+                        "last_conclusion_mode",
+                        "model",
+                    )
+                    if answer_mode == "repaired_model":
+                        answer_warnings = [
+                            "STRUCTURED_CONCLUSION_REJECTED"
+                        ]
+                        conclusion_diagnostics = list(
+                            getattr(
+                                self.provider,
+                                "last_conclusion_diagnostics",
+                                [],
+                            )
+                        )
+                except ProviderError as conclusion_error:
+                    if conclusion_error.code != "UNGROUNDED_ANSWER":
+                        raise
+                    if self._cancel_if_requested(
+                        session,
+                        run,
+                        active_step,
+                    ):
+                        return
+                    answer = DeterministicGroundedAnswerRenderer().render(
+                        registry,
+                        artifact_types,
+                    )
+                    answer_mode = "deterministic_fallback"
+                    answer_warnings = list(
+                        conclusion_error.details.get(
+                            "answer_warnings",
+                            [
+                                "STRUCTURED_CONCLUSION_REJECTED",
+                                "STRUCTURED_CONCLUSION_REPAIR_FAILED",
+                            ],
+                        )
+                    )
+                    conclusion_diagnostics = list(
+                        conclusion_error.details.get(
+                            "conclusion_diagnostics",
+                            [],
+                        )
+                    )
             else:
                 answer = self.provider.build_answer(
                     question, file_record, evidence
@@ -345,7 +435,12 @@ class AnalysisExecutor:
                     artifact_type="text",
                     title="分析结论",
                     content_format="markdown",
-                    payload={"format": "markdown", "content": answer},
+                    payload={
+                        "format": "markdown",
+                        "content": answer,
+                        "answer_mode": answer_mode,
+                        "answer_warnings": answer_warnings,
+                    },
                 ),
             )
             session.flush()
@@ -368,6 +463,11 @@ class AnalysisExecutor:
                 [answer_artifact],
                 0,
                 total_steps,
+                metadata={
+                    "answer_mode": answer_mode,
+                    "answer_warnings": answer_warnings,
+                    "conclusion_diagnostics": conclusion_diagnostics,
+                },
             )
             active_step = None
 
@@ -564,6 +664,7 @@ class AnalysisExecutor:
         duration_ms,
         total_steps,
         tool_result=None,
+        metadata=None,
     ):
         now = utc_now()
         artifact_ids = [item.id for item in artifacts]
@@ -577,6 +678,8 @@ class AnalysisExecutor:
             "row_count": tool_result.row_count if tool_result else None,
             "truncated": tool_result.truncated if tool_result else False,
         }
+        if metadata:
+            step.output_summary_json.update(metadata)
         step.finished_at = now
         step.updated_at = now
         completed_steps = int(run.progress_json["completed_steps"]) + 1
@@ -614,7 +717,11 @@ class AnalysisExecutor:
                 )
                 or None,
                 "artifact_ids": artifact_ids,
-                "warnings": [],
+                "warnings": (
+                    metadata.get("answer_warnings", [])
+                    if metadata
+                    else []
+                ),
                 "duration_ms": duration_ms,
             },
             step.id,

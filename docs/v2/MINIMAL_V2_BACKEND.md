@@ -14,6 +14,7 @@
 → matplotlib 生成柱状图或折线图
 → 保存 RunStep 和 text/metric/table/chart Artifact
 → Fake 返回固定结论，或 DeepSeek 仅根据本 Run 的结构化证据总结
+→ 结构化结论校验失败时最多修复一次；仍失败则根据已验证证据生成确定性回答
 → 原子保存最终 assistant Message 和 completed 终态
 → REST 查询最终状态和会话历史，SSE 重放过程事件
 ```
@@ -329,6 +330,22 @@ API 和 SSE 不返回 `storage_key`、`./storage/...`、Windows 物理路径或�
 - V1 文件、Conversation 和 Message 持久化。
 
 上述工具产生真实的 metric、table 和 chart Artifact；DeepSeek 最终回答只接收这些结果的结构化证据，不允许把样例行猜测成全量结论。
+
+### 结构化结论与安全降级
+
+结论请求使用仅对当前 Run 有效的 `e1`、`e2` 等紧凑证据别名。别名按确定性顺序生成，不能跨 Run 使用，模型不会收到内部 Evidence key 或完整 Evidence Registry。请求内容继续受 `V2_MAX_PROMPT_CHARS` 限制。
+
+结论响应依次经过安全 JSON 提取、Pydantic Schema 校验和 Evidence 引用校验。首次失败后只允许一次结构化修复，不会发起第三次结论调用。校验诊断只保存错误分类、字段路径、计数、响应长度和不可逆哈希，不保存完整响应、Prompt、Registry、原始数据或物理路径。
+
+回答模式保存在最终 text Artifact 的 JSON payload 中：
+
+- `model`：首次结构化结论合法。
+- `repaired_model`：一次修复后合法。
+- `deterministic_fallback`：修复仍失败，但计划、工具、Evidence 和 Artifact 均已验证，服务端使用完整聚合证据生成确定性 Markdown。
+
+确定性回答中的业务数字只来自 Evidence Registry，最终 text Artifact 与 assistant Message 内容一致。该路径会完成 Run，并保留 `STRUCTURED_CONCLUSION_REJECTED` 和 `STRUCTURED_CONCLUSION_REPAIR_FAILED` 内部 warning。
+
+计划无效、工具失败、字段无法识别、Evidence 为空或不一致、Artifact 校验失败、Renderer 失败、安全边界错误和合作式取消都不会被转换为成功状态。
 
 尚未迁移：
 

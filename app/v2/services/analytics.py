@@ -127,10 +127,13 @@ class ToolExecutionResult:
     validated_input: dict[str, Any]
     dataframe: pd.DataFrame | None = field(default=None, repr=False)
 
-    def evidence(self) -> dict[str, Any]:
+    def evidence(self, *, complete: bool = False) -> dict[str, Any]:
+        preview = self.preview[:20]
+        if complete and self.dataframe is not None:
+            preview = _json_rows(self.dataframe)
         return {
             "summary": self.summary,
-            "preview": self.preview[:20],
+            "preview": preview,
             "row_count": self.row_count,
             "truncated": self.truncated,
             "warnings": self.warnings,

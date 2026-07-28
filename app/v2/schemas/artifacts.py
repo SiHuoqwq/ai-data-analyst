@@ -10,6 +10,12 @@ class StrictModel(BaseModel):
 class TextArtifactPayload(StrictModel):
     format: Literal["markdown", "plain_text"]
     content: str = Field(min_length=1)
+    answer_mode: Literal[
+        "model",
+        "repaired_model",
+        "deterministic_fallback",
+    ] | None = None
+    answer_warnings: list[str] = Field(default_factory=list, max_length=10)
 
 
 class MetricArtifactPayload(StrictModel):
