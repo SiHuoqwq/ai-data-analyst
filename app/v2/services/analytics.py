@@ -16,6 +16,7 @@ from app.config import settings
 from app.db.models import FileModel
 from app.services.parser import parse_file
 from app.v2.schemas.analysis import TOOL_INPUT_MODELS
+from app.v2.schemas.results import ResultSchema, ToolOutputContract
 from app.v2.services.artifacts import ArtifactDraft
 
 
@@ -126,18 +127,25 @@ class ToolExecutionResult:
     drafts: list[ArtifactDraft]
     validated_input: dict[str, Any]
     dataframe: pd.DataFrame | None = field(default=None, repr=False)
+    output_contract: ToolOutputContract | None = None
 
     def evidence(self, *, complete: bool = False) -> dict[str, Any]:
         preview = self.preview[:20]
         if complete and self.dataframe is not None:
             preview = _json_rows(self.dataframe)
-        return {
+        evidence = {
             "summary": self.summary,
             "preview": preview,
             "row_count": self.row_count,
             "truncated": self.truncated,
             "warnings": self.warnings,
         }
+        if self.output_contract is not None:
+            evidence["output_contract"] = self.output_contract.model_dump(
+                mode="json",
+                by_alias=True,
+            )
+        return evidence
 
 
 def _json_rows(df: pd.DataFrame) -> list[dict[str, Any]]:
@@ -146,7 +154,19 @@ def _json_rows(df: pd.DataFrame) -> list[dict[str, Any]]:
     return json.loads(df.to_json(orient="records", date_format="iso"))
 
 
-def _table_payload(df: pd.DataFrame) -> dict[str, Any]:
+def _table_payload(
+    df: pd.DataFrame,
+    output_schema: ResultSchema | None = None,
+) -> dict[str, Any]:
+    labels = {}
+    if output_schema is not None:
+        labels = {
+            item.id: item.label
+            for item in [
+                *output_schema.dimensions,
+                *output_schema.metrics,
+            ]
+        }
     columns = []
     for column in df.columns:
         series = df[column]
@@ -159,9 +179,73 @@ def _table_payload(df: pd.DataFrame) -> dict[str, Any]:
         else:
             data_type = "string"
         columns.append(
-            {"key": str(column), "label": str(column), "data_type": data_type}
+            {
+                "key": str(column),
+                "label": labels.get(str(column), str(column)),
+                "data_type": data_type,
+            }
         )
     return {"columns": columns, "rows": _json_rows(df)}
+
+
+def _apply_result_schema(
+    df: pd.DataFrame,
+    output_schema: ResultSchema | None,
+    *,
+    dimension_sources: list[str],
+) -> pd.DataFrame:
+    if output_schema is None:
+        return df
+    if len(dimension_sources) != len(output_schema.dimensions):
+        raise ToolExecutionError(
+            "RESULT_SCHEMA_MISMATCH",
+            "分析结果维度与输出契约不一致",
+        )
+    renames = {
+        source: dimension.id
+        for source, dimension in zip(
+            dimension_sources,
+            output_schema.dimensions,
+        )
+    }
+    result = df.rename(columns=renames)
+    ordered = [
+        *[item.id for item in output_schema.dimensions],
+        *[item.id for item in output_schema.metrics],
+    ]
+    missing = [field for field in ordered if field not in result.columns]
+    if missing:
+        raise ToolExecutionError(
+            "RESULT_SCHEMA_MISMATCH",
+            "分析结果缺少输出契约要求的字段",
+            {"fields": missing},
+        )
+    return result[ordered]
+
+
+def _output_contract(
+    df: pd.DataFrame,
+    output_schema: ResultSchema | None,
+    *,
+    operation: str,
+    source_step_id: str | None,
+    preview_row_count: int,
+) -> ToolOutputContract | None:
+    if output_schema is None:
+        return None
+    if not source_step_id:
+        raise ToolExecutionError(
+            "RESULT_SCHEMA_MISMATCH",
+            "结构化结果缺少来源步骤",
+        )
+    return ToolOutputContract(
+        schema=output_schema,
+        rows=_json_rows(df),
+        full_row_count=len(df),
+        preview_row_count=preview_row_count,
+        source_tool=operation,
+        source_step_id=source_step_id,
+    )
 
 
 def _as_rate(series: pd.Series) -> pd.Series:
@@ -205,6 +289,9 @@ class StructuredAnalysisTools:
         arguments: dict[str, Any],
         file_record: FileModel,
         prior_results: dict[str, ToolExecutionResult],
+        *,
+        output_schema: ResultSchema | None = None,
+        source_step_id: str | None = None,
     ) -> ToolExecutionResult:
         model = TOOL_INPUT_MODELS.get(operation)
         if model is None:
@@ -231,11 +318,26 @@ class StructuredAnalysisTools:
         if operation == "inspect_dataset":
             return self._inspect(df, validated)
         if operation == "group_aggregate":
-            return self._group_aggregate(df, validated)
+            return self._group_aggregate(
+                df,
+                validated,
+                output_schema,
+                source_step_id,
+            )
         if operation == "monthly_trend":
-            return self._monthly_trend(df, validated)
+            return self._monthly_trend(
+                df,
+                validated,
+                output_schema,
+                source_step_id,
+            )
         if operation == "identify_underperforming":
-            return self._underperforming(df, validated)
+            return self._underperforming(
+                df,
+                validated,
+                output_schema,
+                source_step_id,
+            )
         raise ToolExecutionError("UNKNOWN_TOOL", "请求的分析工具不在允许列表中")
 
     def _require_fields(self, df: pd.DataFrame, fields: list[str | None]):
@@ -395,7 +497,11 @@ class StructuredAnalysisTools:
         )
 
     def _group_aggregate(
-        self, df: pd.DataFrame, validated: dict[str, Any]
+        self,
+        df: pd.DataFrame,
+        validated: dict[str, Any],
+        output_schema: ResultSchema | None = None,
+        source_step_id: str | None = None,
     ) -> ToolExecutionResult:
         filtered = self._apply_filters(df, validated["filters"])
         if filtered.empty:
@@ -413,19 +519,36 @@ class StructuredAnalysisTools:
             result = result.sort_values(
                 sort["field"], ascending=sort["direction"] == "asc"
             )
-        full_count = len(result)
-        result = result.head(validated["limit"]).reset_index(drop=True)
+        full_result = _apply_result_schema(
+            result.reset_index(drop=True),
+            output_schema,
+            dimension_sources=validated["group_by"],
+        )
+        full_count = len(full_result)
+        result = full_result.head(validated["limit"]).reset_index(drop=True)
+        contract = _output_contract(
+            full_result,
+            output_schema,
+            operation="group_aggregate",
+            source_step_id=source_step_id,
+            preview_row_count=min(len(result), 20),
+        )
         summary = {
             "description": "多维分组统计",
             "group_by": validated["group_by"],
             "metrics": [item["alias"] for item in validated["metrics"]],
             "scanned_rows": len(filtered),
         }
+        if output_schema is not None:
+            summary["result_schema"] = output_schema.model_dump(mode="json")
+            summary["metric_labels"] = {
+                item.id: item.label for item in output_schema.metrics
+            }
         draft = ArtifactDraft(
             artifact_type="table",
             title="分组统计结果",
             content_format="json",
-            payload=_table_payload(result),
+            payload=_table_payload(result, output_schema),
             row_count=full_count,
         )
         return ToolExecutionResult(
@@ -437,11 +560,16 @@ class StructuredAnalysisTools:
             [],
             [draft],
             validated,
-            result,
+            full_result,
+            contract,
         )
 
     def _monthly_trend(
-        self, df: pd.DataFrame, validated: dict[str, Any]
+        self,
+        df: pd.DataFrame,
+        validated: dict[str, Any],
+        output_schema: ResultSchema | None = None,
+        source_step_id: str | None = None,
     ) -> ToolExecutionResult:
         fields = [validated["date_field"], validated["category_field"]]
         self._require_fields(df, fields)
@@ -457,12 +585,26 @@ class StructuredAnalysisTools:
             ["月份", validated["category_field"]],
             validated["metrics"],
         ).sort_values(["月份", validated["category_field"]])
+        full_result = _apply_result_schema(
+            full_result.reset_index(drop=True),
+            output_schema,
+            dimension_sources=["月份", validated["category_field"]],
+        )
         full_count = len(full_result)
         result = full_result.head(validated["limit"]).reset_index(drop=True)
         warnings = (
             [f"{invalid_count} 条记录的日期无效，已排除"] if invalid_count else []
         )
-        category_field = validated["category_field"]
+        category_field = (
+            output_schema.dimensions[1].id
+            if output_schema is not None
+            else validated["category_field"]
+        )
+        period_field = (
+            output_schema.dimensions[0].id
+            if output_schema is not None
+            else "月份"
+        )
         metric_signals = {}
         for metric in validated["metrics"]:
             metric_name = metric["alias"]
@@ -471,7 +613,7 @@ class StructuredAnalysisTools:
                 category_field, dropna=False
             ):
                 values = pd.to_numeric(
-                    subset.sort_values("月份")[metric_name],
+                    subset.sort_values(period_field)[metric_name],
                     errors="coerce",
                 ).dropna()
                 if values.empty:
@@ -556,11 +698,23 @@ class StructuredAnalysisTools:
             "scanned_rows": len(filtered),
             "trend_signals": trend_signals,
         }
+        if output_schema is not None:
+            summary["result_schema"] = output_schema.model_dump(mode="json")
+            summary["metric_labels"] = {
+                item.id: item.label for item in output_schema.metrics
+            }
+        contract = _output_contract(
+            full_result,
+            output_schema,
+            operation="monthly_trend",
+            source_step_id=source_step_id,
+            preview_row_count=len(result),
+        )
         draft = ArtifactDraft(
             artifact_type="table",
             title="月度趋势",
             content_format="json",
-            payload=_table_payload(result),
+            payload=_table_payload(result, output_schema),
             row_count=full_count,
         )
         return ToolExecutionResult(
@@ -572,11 +726,16 @@ class StructuredAnalysisTools:
             warnings,
             [draft],
             validated,
-            full_result.reset_index(drop=True),
+            full_result,
+            contract,
         )
 
     def _underperforming(
-        self, df: pd.DataFrame, validated: dict[str, Any]
+        self,
+        df: pd.DataFrame,
+        validated: dict[str, Any],
+        output_schema: ResultSchema | None = None,
+        source_step_id: str | None = None,
     ) -> ToolExecutionResult:
         self._require_fields(
             df, validated["group_by"] + [validated["completion_field"]]
@@ -613,6 +772,21 @@ class StructuredAnalysisTools:
             & (eligible["平均完成率"] <= completion_threshold)
         ].sort_values(["平均完成率", "报名人数"], ascending=[True, False])
         result = result.head(validated["limit"]).reset_index(drop=True)
+        if output_schema is not None:
+            metric_ids = [item.id for item in output_schema.metrics]
+            metric_sources = [
+                column
+                for column in result.columns
+                if column not in validated["group_by"]
+            ]
+            result = result.rename(
+                columns=dict(zip(metric_sources, metric_ids))
+            )
+        result = _apply_result_schema(
+            result,
+            output_schema,
+            dimension_sources=validated["group_by"],
+        )
         rule = {
             "min_sample_size": validated["min_sample_size"],
             "high_volume_quantile": validated["high_volume_quantile"],
@@ -625,11 +799,23 @@ class StructuredAnalysisTools:
             "rule": rule,
             "matched_groups": len(result),
         }
+        if output_schema is not None:
+            summary["result_schema"] = output_schema.model_dump(mode="json")
+            summary["metric_labels"] = {
+                item.id: item.label for item in output_schema.metrics
+            }
+        contract = _output_contract(
+            result,
+            output_schema,
+            operation="identify_underperforming",
+            source_step_id=source_step_id,
+            preview_row_count=len(result),
+        )
         draft = ArtifactDraft(
             artifact_type="table",
             title="高报名低完成率组合",
             content_format="json",
-            payload=_table_payload(result),
+            payload=_table_payload(result, output_schema),
             row_count=len(result),
         )
         return ToolExecutionResult(
@@ -642,6 +828,7 @@ class StructuredAnalysisTools:
             [draft],
             validated,
             result,
+            contract,
         )
 
     def _create_chart(
@@ -666,7 +853,33 @@ class StructuredAnalysisTools:
 
         x_field = validated["x_field"]
         color_field = validated["color_field"]
-        group_by = source.validated_input.get("group_by") or []
+        result_schema = (
+            source.output_contract.result_schema
+            if source.output_contract is not None
+            else None
+        )
+        field_labels = {}
+        metric_units = {}
+        if result_schema is not None:
+            field_labels = {
+                item.id: item.label
+                for item in [
+                    *result_schema.dimensions,
+                    *result_schema.metrics,
+                ]
+            }
+            metric_units = {
+                item.id: item.unit for item in result_schema.metrics
+            }
+        group_by = (
+            [
+                item.id
+                for item in result_schema.dimensions
+                if item.role == "category"
+            ]
+            if result_schema is not None
+            else source.validated_input.get("group_by") or []
+        )
         label_fields = [
             field for field in group_by if field in df.columns
         ]
@@ -677,7 +890,8 @@ class StructuredAnalysisTools:
         )
         unit_groups: dict[str, list[str]] = {}
         for y_field in validated["y_fields"]:
-            unit_groups.setdefault(_chart_unit(y_field), []).append(y_field)
+            unit = metric_units.get(y_field, _chart_unit(y_field))
+            unit_groups.setdefault(unit, []).append(y_field)
 
         drafts = []
         for unit, y_fields in unit_groups.items():
@@ -691,7 +905,7 @@ class StructuredAnalysisTools:
                         [item + index * width for item in x],
                         values,
                         width=width,
-                        label=y_field,
+                        label=field_labels.get(y_field, y_field),
                     )
                 ax.set_xticks(
                     [
@@ -709,7 +923,10 @@ class StructuredAnalysisTools:
                             subset[x_field].astype(str),
                             pd.to_numeric(subset[y_field], errors="coerce"),
                             marker="o",
-                            label=f"{category} · {y_field}",
+                            label=(
+                                f"{category} · "
+                                f"{field_labels.get(y_field, y_field)}"
+                            ),
                         )
                 ax.tick_params(axis="x", rotation=35)
             else:
@@ -718,7 +935,7 @@ class StructuredAnalysisTools:
                         df[x_field].astype(str),
                         pd.to_numeric(df[y_field], errors="coerce"),
                         marker="o",
-                        label=y_field,
+                        label=field_labels.get(y_field, y_field),
                     )
                 ax.tick_params(axis="x", rotation=35)
             title = validated["title"]
@@ -727,7 +944,13 @@ class StructuredAnalysisTools:
             if len(source.dataframe) > validated["limit"]:
                 title = f"{title}，展示前 {validated['limit']} 项"
             ax.set_title(title)
-            ax.set_xlabel(" / ".join(label_fields) if label_fields else x_field)
+            axis_fields = label_fields or [x_field]
+            ax.set_xlabel(
+                " / ".join(
+                    field_labels.get(field, field)
+                    for field in axis_fields
+                )
+            )
             ax.legend()
             fig.tight_layout()
             chart_root = Path(settings.chart_dir)
@@ -750,7 +973,10 @@ class StructuredAnalysisTools:
                     alt_text=_chart_alt_text(
                         title,
                         full_labels,
-                        y_fields,
+                        [
+                            field_labels.get(field, field)
+                            for field in y_fields
+                        ],
                         unit,
                     ),
                 )
