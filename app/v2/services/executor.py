@@ -10,6 +10,7 @@ from app.v2.db.models import (
     utc_now,
 )
 from app.v2.domain.state_machine import RunStatus, StepStatus, transition_run
+from app.v2.domain.intent_router import ControlledIntentRouter
 from app.v2.services.artifacts import ArtifactDraft, ArtifactFactory
 from app.v2.services.analytics import (
     StructuredAnalysisTools,
@@ -42,6 +43,7 @@ class AnalysisExecutor:
         structured_tools: StructuredAnalysisTools | None = None,
         plan_compiler: PlanCompiler | None = None,
         chart_planner: ChartPlanner | None = None,
+        intent_router: ControlledIntentRouter | None = None,
     ):
         self.provider = provider
         self.tools = tools or V1DataToolAdapter()
@@ -50,6 +52,7 @@ class AnalysisExecutor:
         self.events = events or EventEmitter()
         self.plan_compiler = plan_compiler or PlanCompiler()
         self.chart_planner = chart_planner or ChartPlanner()
+        self.intent_router = intent_router or ControlledIntentRouter()
         self.run_service = AnalysisRunService(self.events)
 
     def execute(self, run_id: str) -> None:
@@ -117,9 +120,47 @@ class AnalysisExecutor:
             )
             compiled_workflow = callable(generate_intent)
             if compiled_workflow:
-                intent = generate_intent(question, file_record)
+                try:
+                    intent = generate_intent(question, file_record)
+                    intent_mode = getattr(
+                        self.provider,
+                        "last_intent_mode",
+                        "model",
+                    )
+                except ProviderError as intent_error:
+                    if intent_error.code != "INTENT_REPAIR_FAILED":
+                        raise
+                    decision = self.intent_router.route(question)
+                    if decision.workflow == "unsupported":
+                        raise ProviderError(
+                            "UNSUPPORTED_ANALYSIS_INTENT",
+                            "当前问题不属于已支持的在线学习运营分析范围",
+                            retryable=False,
+                        ) from intent_error
+                    intent = self.intent_router.default_intent(decision)
+                    intent_mode = "controlled_fallback"
                 plan = self.plan_compiler.compile(intent, file_record)
                 self.plan_compiler.validator.validate(plan, file_record)
+                run.context_snapshot_json = {
+                    **(run.context_snapshot_json or {}),
+                    "intent_mode": intent_mode,
+                }
+                self.events.emit(
+                    session,
+                    run,
+                    "run.status",
+                    {
+                        "status": "running",
+                        "current_phase": "plan_generation",
+                        "progress": {
+                            "completed_steps": 0,
+                            "total_steps": None,
+                        },
+                        "summary": "已确定受控分析工作流",
+                        "intent_mode": intent_mode,
+                    },
+                )
+                session.commit()
             else:
                 plan = self.provider.build_plan(question, file_record)
             expected_artifact_types: set[str] = set()

@@ -103,6 +103,7 @@ class RunSummary(APIModel):
     output_message_id: str | None
     status: str
     current_phase: str | None
+    intent_mode: str | None = None
     progress: dict[str, Any]
     failure: dict[str, Any] | None
     created_at: datetime.datetime

@@ -129,6 +129,9 @@ class AnalysisQueryService:
             "output_message_id": run.answer_message_id,
             "status": run.status,
             "current_phase": run.current_phase,
+            "intent_mode": (run.context_snapshot_json or {}).get(
+                "intent_mode"
+            ),
             "progress": run.progress_json,
             "failure": run.failure_json,
             "created_at": as_utc(run.created_at),

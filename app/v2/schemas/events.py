@@ -34,6 +34,11 @@ class RunStatusPayload(StrictEventModel):
     current_phase: str | None
     progress: ProgressPayload
     summary: str
+    intent_mode: Literal[
+        "model",
+        "repaired_model",
+        "controlled_fallback",
+    ] | None = None
 
 
 class StepStartedPayload(StrictEventModel):
