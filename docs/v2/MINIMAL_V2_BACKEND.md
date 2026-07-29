@@ -350,7 +350,7 @@ API 和 SSE 不返回 `storage_key`、`./storage/...`、Windows 物理路径或�
 尚未迁移：
 
 - 其余 V1 分布、相关性、IQR 异常值、散点图、热力图等工具；
-- 完整 AnalysisPlan revision 与 PlanValidator；
+- 可由用户编辑或 revision 的通用 AnalysisPlan；当前 PlanValidator 只覆盖两条已编译领域工作流；
 - Dataset、DatasetVersion 的正式 V2 表和上传 API；
 - 结构化交互式图表 Schema；
 - 报告导出和完整报告管理。
@@ -391,5 +391,54 @@ API 和 SSE 不返回 `storage_key`、`./storage/...`、Windows 物理路径或�
 $env:PYTHONDONTWRITEBYTECODE = "1"
 python -m pytest -q
 ```
+
+## 在线学习运营领域工作流
+
+V2 的生产 DeepSeek 路径不再让模型生成底层工具步骤。当前执行边界为：
+
+```text
+自然语言问题
+→ DeepSeek 生成严格 AnalysisIntent
+→ PlanCompiler 选择并编译固定工作流
+→ PlanValidator 在执行前检查字段、类型和字段血缘
+→ pandas 工具产生带 ResultSchema 的完整结果
+→ ChartPlanner 按维度角色和指标单位生成 ChartSpec
+→ Evidence Registry 校验结论引用
+→ 结构化结论或确定性降级
+```
+
+当前正式支持的领域是在线学习运营，工作流只有：
+
+- `group_comparison`：按课程、难度、渠道、设备等维度比较报名人数、平均完成率、退款率和平均评分；需要时识别高报名低完成组合。
+- `monthly_trend`：按自然月和课程类别统计报名人数、实付金额和平均完成率，并识别增长、下降和波动信号。
+
+模型可以选择分析类型、业务维度、日期字段、指标语义、来源字段、聚合方式和过滤条件。模型不能指定工具顺序、内部步骤 ID、`source_step_id`、图表横纵轴、图表数量、Evidence key、SQL 或 Python。
+
+### 稳定结果契约
+
+工具间使用稳定内部字段 ID，界面继续使用可读 label。例如月度趋势固定输出：
+
+- 维度：`period`（月份，`role=time`）、`series`（课程类别，`role=series`）。
+- 指标：`enrollment_count`（count）、`paid_amount_sum`（currency）、`completion_rate_mean`（percentage）。
+
+分组对比使用 `dimension_1`、`dimension_2` 等维度 ID，以及 `sample_count`、`completion_rate_mean`、`refund_rate`、`rating_mean` 等指标 ID。`ToolOutputContract` 同时保存 schema、完整 rows、完整行数、预览行数、来源工具和来源步骤。完整计算结果供趋势识别、图表与 Evidence 使用，Artifact 只保存受限预览。
+
+### 确定性图表规划
+
+`ChartPlanner` 只读取上游 ResultSchema：
+
+- 时间维度自动作为折线图横轴，series 维度自动作为图例。
+- count、currency、score 分别绘图。
+- percentage 指标可以共享同一纵轴。
+- 不同 unit 不会进入同一纵轴。
+- 原始输入日期字段只用于聚合输入；月度图表只使用 `period`，不会继续引用“报名日期”。
+
+图表仍由 matplotlib 生成 PNG，并通过 `/api/v2/artifacts/{artifact_id}/download` 提供浏览器可访问 URL；API 和 Artifact 不暴露物理路径。
+
+### 兼容和范围
+
+Fake Provider 及现有旧计划对象继续作为测试和迁移兼容路径。配置为 DeepSeek 时，主路径固定使用 `generate_intent → PlanCompiler`，不再依赖模型生成完整 AnalysisPlan，也不在工具失败后让模型修补底层步骤。
+
+当前尚未实现通用 DomainPack 系统、任意行业工作流、任意 Python/SQL、交互式图表编辑器或全部 V1 工具迁移。未来可以通过新的领域包扩展意图和编译规则，但这不是当前已完成能力。
 
 测试全部使用临时 SQLite、匿名 CSV/XLSX、临时图表目录和 `httpx.MockTransport`，不读取真实 `app.db`，不调用真实 LLM，不在仓库 storage 留下测试图片。

@@ -123,7 +123,7 @@ cd frontend && npm run dev
 
 ### 最小 V2 后端
 
-仓库同时包含可切换 Fake/DeepSeek Provider 的 `/api/v2` 分析闭环。默认 Fake 模式不需要密钥；DeepSeek 模式通过白名单结构化计划调用 pandas 工具，并只基于聚合证据生成结论。迁移、启动、API、SSE、配置、安全边界和 V1/V2 共存说明见 [最小 V2 后端运行说明](docs/v2/MINIMAL_V2_BACKEND.md)。
+仓库同时包含可切换 Fake/DeepSeek Provider 的 `/api/v2` 分析闭环。当前产品定位为在线学习运营分析：DeepSeek 只识别高层分析意图，服务端 `PlanCompiler` 为分组对比和月度趋势生成确定性步骤，`ChartPlanner` 按结果元数据自动拆分图表，pandas 负责全部业务计算。默认 Fake 模式不需要密钥；结论只基于本次 Run 的聚合证据，结构化结论失败时可安全降级。迁移、启动、API、SSE、配置、能力边界和 V1/V2 共存说明见 [最小 V2 后端运行说明](docs/v2/MINIMAL_V2_BACKEND.md)。
 
 ## 使用流程
 

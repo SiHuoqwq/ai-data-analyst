@@ -16,6 +16,7 @@ from app.v2.services.analytics import (
     ToolExecutionError,
     ToolExecutionResult,
 )
+from app.v2.services.chart_planner import ChartPlanner, ChartPlanningError
 from app.v2.services.events import EventEmitter
 from app.v2.services.evidence import EvidenceRegistry
 from app.v2.services.deterministic_renderer import (
@@ -23,6 +24,10 @@ from app.v2.services.deterministic_renderer import (
 )
 from app.v2.services.markdown_renderer import ConclusionMarkdownRenderer
 from app.v2.services.provider import AnalysisProvider, ProviderError
+from app.v2.services.plan_compiler import (
+    PlanCompilationError,
+    PlanCompiler,
+)
 from app.v2.services.runs import AnalysisRunService
 from app.v2.services.tools import V1DataToolAdapter
 
@@ -35,12 +40,16 @@ class AnalysisExecutor:
         artifacts: ArtifactFactory | None = None,
         events: EventEmitter | None = None,
         structured_tools: StructuredAnalysisTools | None = None,
+        plan_compiler: PlanCompiler | None = None,
+        chart_planner: ChartPlanner | None = None,
     ):
         self.provider = provider
         self.tools = tools or V1DataToolAdapter()
         self.structured_tools = structured_tools or StructuredAnalysisTools()
         self.artifacts = artifacts or ArtifactFactory()
         self.events = events or EventEmitter()
+        self.plan_compiler = plan_compiler or PlanCompiler()
+        self.chart_planner = chart_planner or ChartPlanner()
         self.run_service = AnalysisRunService(self.events)
 
     def execute(self, run_id: str) -> None:
@@ -101,7 +110,18 @@ class AnalysisExecutor:
                     return run.cancel_requested_at is not None
 
                 set_cancel_check(provider_cancel_requested)
-            plan = self.provider.build_plan(question, file_record)
+            generate_intent = getattr(
+                self.provider,
+                "generate_intent",
+                None,
+            )
+            compiled_workflow = callable(generate_intent)
+            if compiled_workflow:
+                intent = generate_intent(question, file_record)
+                plan = self.plan_compiler.compile(intent, file_record)
+                self.plan_compiler.validator.validate(plan, file_record)
+            else:
+                plan = self.provider.build_plan(question, file_record)
             expected_artifact_types: set[str] = set()
             structured_outputs = {
                 "inspect_dataset": {"text", "metric"},
@@ -109,6 +129,7 @@ class AnalysisExecutor:
                 "monthly_trend": {"table"},
                 "identify_underperforming": {"table"},
                 "create_chart": {"chart"},
+                "chart_planning": {"chart"},
             }
             for planned_step in plan.steps:
                 if (
@@ -155,7 +176,22 @@ class AnalysisExecutor:
                 )
                 started = time.monotonic()
                 tool_result = None
-                if provider_step.arguments is not None:
+                if compiled_workflow:
+                    tool_rounds += 1
+                    if tool_rounds > max_tool_rounds:
+                        raise ProviderError(
+                            "TOOL_ROUND_LIMIT_EXCEEDED",
+                            "分析工具调用超过允许的轮次",
+                            retryable=False,
+                        )
+                    tool_result = self._execute_compiled_step(
+                        provider_step,
+                        file_record,
+                        prior_results,
+                    )
+                    prior_results[provider_step.step_id] = tool_result
+                    drafts = tool_result.drafts
+                elif provider_step.arguments is not None:
                     tool_rounds += 1
                     if tool_rounds > max_tool_rounds:
                         raise ProviderError(
@@ -531,6 +567,11 @@ class AnalysisExecutor:
                     error_message = exc.message
                     retryable = exc.retryable
                     error_details = exc.details
+                elif isinstance(exc, (PlanCompilationError, ChartPlanningError)):
+                    error_code = exc.code
+                    error_message = exc.message
+                    retryable = False
+                    error_details = exc.details
                 else:
                     error_code = "EXECUTION_FAILED"
                     error_message = "分析执行失败"
@@ -654,6 +695,90 @@ class AnalysisExecutor:
         )
         session.commit()
         return step
+
+    def _execute_compiled_step(
+        self,
+        step,
+        file_record,
+        prior_results: dict[str, ToolExecutionResult],
+    ) -> ToolExecutionResult:
+        if step.operation == "calculate_trend_signals":
+            source_id = step.arguments["source_step_id"]
+            source = prior_results.get(source_id)
+            if source is None:
+                raise ToolExecutionError(
+                    "SOURCE_RESULT_NOT_FOUND",
+                    "趋势识别引用的分析结果不存在",
+                    {"source_step_id": source_id},
+                )
+            return ToolExecutionResult(
+                status="success",
+                summary={
+                    "description": "已根据完整聚合结果识别趋势",
+                    "trend_signals": source.summary.get(
+                        "trend_signals",
+                        {},
+                    ),
+                },
+                preview=[],
+                row_count=source.row_count,
+                truncated=False,
+                warnings=[],
+                drafts=[],
+                validated_input=step.arguments,
+                dataframe=source.dataframe,
+                output_contract=source.output_contract,
+            )
+        if step.operation == "chart_planning":
+            drafts = []
+            chart_summaries = []
+            for source_id in step.arguments["source_step_ids"]:
+                source = prior_results.get(source_id)
+                if source is None:
+                    raise ToolExecutionError(
+                        "SOURCE_RESULT_NOT_FOUND",
+                        "图表规划引用的分析结果不存在",
+                        {"source_step_id": source_id},
+                    )
+                specs = self.chart_planner.plan(source_id, source)
+                for spec in specs:
+                    chart_result = self.structured_tools.execute(
+                        "create_chart",
+                        spec.arguments(),
+                        file_record,
+                        prior_results,
+                    )
+                    drafts.extend(chart_result.drafts)
+                    chart_summaries.append(
+                        {
+                            "source_step_id": source_id,
+                            "unit": spec.unit,
+                            "x_field": spec.x_field,
+                            "y_fields": spec.y_fields,
+                            "chart_type": spec.chart_type,
+                        }
+                    )
+            return ToolExecutionResult(
+                status="success",
+                summary={
+                    "description": "已根据结果元数据生成图表",
+                    "charts": chart_summaries,
+                },
+                preview=[],
+                row_count=len(chart_summaries),
+                truncated=False,
+                warnings=[],
+                drafts=drafts,
+                validated_input=step.arguments,
+            )
+        return self.structured_tools.execute(
+            step.operation,
+            step.arguments,
+            file_record,
+            prior_results,
+            output_schema=step.output_schema,
+            source_step_id=step.step_id,
+        )
 
     def _complete_step(
         self,
