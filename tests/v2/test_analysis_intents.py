@@ -147,6 +147,9 @@ def test_deepseek_generates_intent_without_low_level_plan_fields():
     assert "不得生成 x_field" in prompt
     assert "allowed_tools" not in prompt
     assert "create_chart" not in prompt
+    assert captured["body"]["response_format"] == {
+        "type": "json_object"
+    }
 
 
 def test_deepseek_repairs_invalid_intent_at_most_once():
@@ -155,9 +158,11 @@ def test_deepseek_repairs_invalid_intent_at_most_once():
         monthly_intent_payload(),
     ]
     calls = 0
+    request_bodies = []
 
-    def handler(_request):
+    def handler(request):
         nonlocal calls
+        request_bodies.append(json.loads(request.content))
         payload = responses[calls]
         calls += 1
         return httpx.Response(
@@ -176,6 +181,10 @@ def test_deepseek_repairs_invalid_intent_at_most_once():
 
     assert intent.analysis_type == "monthly_trend"
     assert calls == 2
+    assert all(
+        body["response_format"] == {"type": "json_object"}
+        for body in request_bodies
+    )
 
 
 def test_deepseek_fails_after_single_intent_repair():

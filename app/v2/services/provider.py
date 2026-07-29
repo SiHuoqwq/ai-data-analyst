@@ -346,6 +346,7 @@ class DeepSeekProvider:
                 },
             ],
             temperature=0,
+            json_output=True,
         )
         try:
             return self._validate_intent_response(content)
@@ -399,6 +400,7 @@ class DeepSeekProvider:
                 },
             ],
             temperature=0,
+            json_output=True,
         )
 
     def _validate_plan_response(self, content: str) -> ModelPlanDraft:
@@ -776,7 +778,11 @@ class DeepSeekProvider:
         return self._client
 
     def _chat(
-        self, messages: list[dict[str, str]], *, temperature: float
+        self,
+        messages: list[dict[str, str]],
+        *,
+        temperature: float,
+        json_output: bool = False,
     ) -> str:
         body = {
             "model": self.model,
@@ -784,6 +790,8 @@ class DeepSeekProvider:
             "temperature": temperature,
             "stream": False,
         }
+        if json_output:
+            body["response_format"] = {"type": "json_object"}
         for attempt in range(self.max_retries + 1):
             try:
                 response = self._client_instance().post(
