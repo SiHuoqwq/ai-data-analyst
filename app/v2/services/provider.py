@@ -29,6 +29,9 @@ from app.v2.services.structured_response import (
     StructuredResponseError,
     StructuredResponseParser,
 )
+from app.v2.services.structured_diagnostics import (
+    diagnose_structured_response,
+)
 
 
 DOMAIN_INTENT_ADAPTER = TypeAdapter(DomainIntent)
@@ -135,6 +138,8 @@ class FakeAnalysisProvider:
         self.last_conclusion_mode = "model"
         self.last_conclusion_diagnostics: list[dict[str, Any]] = []
         self.last_intent_mode = "model"
+        self.last_intent_diagnostics: list[dict[str, Any]] = []
+        self._last_finish_reason: str | None = None
 
     def set_history(self, history: list[dict[str, str]]) -> None:
         self.history = history
@@ -344,6 +349,7 @@ class DeepSeekProvider:
             self.set_history(history)
         self._require_config()
         self.last_intent_mode = "model"
+        self.last_intent_diagnostics = []
         payload = {
             "question": question[:4000],
             "dataset": self._safe_dataset_profile(file_record),
@@ -378,8 +384,26 @@ class DeepSeekProvider:
             max_tokens=1000,
         )
         try:
-            return self._validate_intent_response(content)
+            intent = self._validate_intent_response(content)
+            self.last_intent_diagnostics.append(
+                diagnose_structured_response(
+                    content,
+                    finish_reason=self._last_finish_reason,
+                    request_stage="initial",
+                    error=None,
+                    intent_mode="model",
+                )
+            )
+            return intent
         except (StructuredResponseError, ValidationError) as initial_error:
+            self.last_intent_diagnostics.append(
+                diagnose_structured_response(
+                    content,
+                    finish_reason=self._last_finish_reason,
+                    request_stage="initial",
+                    error=initial_error,
+                )
+            )
             self._raise_if_cancelled()
             repaired = self._repair_intent_response(
                 content,
@@ -388,12 +412,32 @@ class DeepSeekProvider:
             try:
                 intent = self._validate_intent_response(repaired)
                 self.last_intent_mode = "repaired_model"
+                self.last_intent_diagnostics.append(
+                    diagnose_structured_response(
+                        repaired,
+                        finish_reason=self._last_finish_reason,
+                        request_stage="repair",
+                        error=None,
+                        intent_mode="repaired_model",
+                    )
+                )
                 return intent
             except (StructuredResponseError, ValidationError) as exc:
+                self.last_intent_diagnostics.append(
+                    diagnose_structured_response(
+                        repaired,
+                        finish_reason=self._last_finish_reason,
+                        request_stage="repair",
+                        error=exc,
+                    )
+                )
                 raise ProviderError(
                     "INTENT_REPAIR_FAILED",
                     "分析服务返回了无法执行的分析意图",
                     retryable=False,
+                    details={
+                        "intent_diagnostics": self.last_intent_diagnostics,
+                    },
                 ) from exc
 
     def _validate_intent_response(self, content: str) -> DomainIntent:
@@ -408,6 +452,7 @@ class DeepSeekProvider:
     ) -> str:
         payload = {
             "validation_issues": self._validation_issues(error),
+            "response_diagnostic": self.last_intent_diagnostics[-1],
             "intent_schema": DOMAIN_INTENT_ADAPTER.json_schema(),
             "valid_json_examples": DOMAIN_INTENT_EXAMPLES,
             "rules": [
@@ -827,6 +872,7 @@ class DeepSeekProvider:
             body["response_format"] = {"type": "json_object"}
         if max_tokens is not None:
             body["max_tokens"] = max_tokens
+        self._last_finish_reason = None
         for attempt in range(self.max_retries + 1):
             try:
                 response = self._client_instance().post(
@@ -873,7 +919,9 @@ class DeepSeekProvider:
                 )
             try:
                 data = response.json()
-                return str(data["choices"][0]["message"].get("content") or "")
+                choice = data["choices"][0]
+                self._last_finish_reason = choice.get("finish_reason")
+                return str(choice["message"].get("content") or "")
             except (ValueError, KeyError, IndexError, TypeError) as exc:
                 raise ProviderError(
                     "PROVIDER_INVALID_RESPONSE",

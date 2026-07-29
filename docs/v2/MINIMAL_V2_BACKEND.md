@@ -362,7 +362,7 @@ API 和 SSE 不返回 `storage_key`、`./storage/...`、Windows 物理路径或�
 1. 对课程类别、难度、购买渠道和学习设备做多维分组，比较完成率、退款率、评分和报名人数，识别高报名低完成率组合并生成表格与柱状图。
 2. 按月、按课程类别统计报名人数、实付金额和平均完成率，记录增长、下滑和波动规则并生成趋势表和折线图。
 
-模型负责选择字段和组织结论；所有统计值由 pandas 工具计算。当前不承诺任意开放式数据科学问题，也未迁移全部 V1 工具。
+模型只负责选择受限的工作流、逻辑维度和逻辑指标，并组织结论；来源字段、聚合规则和所有统计值均由服务端注册表与 pandas 工具决定。当前不承诺任意开放式数据科学问题，也未迁移全部 V1 工具。
 
 ## 合作式取消
 
@@ -412,7 +412,54 @@ V2 的生产 DeepSeek 路径不再让模型生成底层工具步骤。当前执�
 - `group_comparison`：按课程、难度、渠道、设备等维度比较报名人数、平均完成率、退款率和平均评分；需要时识别高报名低完成组合。
 - `monthly_trend`：按自然月和课程类别统计报名人数、实付金额和平均完成率，并识别增长、下降和波动信号。
 
-模型可以选择分析类型、业务维度、日期字段、指标语义、来源字段、聚合方式和过滤条件。模型不能指定工具顺序、内部步骤 ID、`source_step_id`、图表横纵轴、图表数量、Evidence key、SQL 或 Python。
+模型仅输出以下两种最小意图之一：
+
+```json
+{
+  "workflow": "group_comparison",
+  "dimensions": ["course_category"],
+  "metric_ids": ["enrollment_count", "completion_rate"],
+  "detect_underperforming": true
+}
+```
+
+```json
+{
+  "workflow": "monthly_trend",
+  "series_dimension": "course_category",
+  "metric_ids": ["enrollment_count", "paid_amount", "completion_rate"]
+}
+```
+
+允许的逻辑维度为 `course_category`、`course_difficulty`、`purchase_channel` 和 `primary_device`；允许的逻辑指标由具体工作流限制。模型不能输出来源字段、聚合方式、底层过滤操作符、日期字段、工具名称、步骤、内部输出字段、`source_step_id`、图表参数、Evidence key、SQL 或 Python。
+
+服务端领域注册表负责将逻辑 ID 解析为当前在线学习数据集的中文字段，并确定聚合与单位：
+
+- `course_category` → `课程类别`
+- `course_difficulty` → `课程难度`
+- `purchase_channel` → `购买渠道`
+- `primary_device` → `主要学习设备`
+- `enrollment_count` → 记录计数
+- `paid_amount` → `实付金额` 求和
+- `completion_rate` → `课程完成率` 均值
+- `refund_rate` → `是否退款` 布尔比例
+- `rating` → `课程评分` 非空均值
+- 月度工作流固定使用 `报名日期`，并输出内部时间维度 `period`
+
+因此模型输出不携带可执行字段或聚合细节，`PlanCompiler` 只编译服务端已知的安全组合。
+
+### 意图来源与受控降级
+
+Run 的 `intent_mode` 与最终回答的 `answer_mode` 是两个独立事实：
+
+- `intent_mode=model`：首次模型意图通过严格 Schema 校验。
+- `intent_mode=repaired_model`：首次意图失败，唯一一次修复后通过。
+- `intent_mode=controlled_fallback`：两次意图均失败，但本地只读路由器能以高置信度将问题归入两个已支持工作流之一。
+- `answer_mode=model`、`repaired_model`、`deterministic_fallback`：分别描述最终结论的生成路径，不代表意图来源。
+
+受控路由器只选择工作流并使用注册表定义的安全默认意图，不解析任意字段或生成步骤。问题信号冲突、置信度不足或不属于两个工作流时，Run 以 `UNSUPPORTED_ANALYSIS_INTENT` 失败；不会调用 pandas 工具、不会生成伪成功 assistant Message。
+
+结构化意图诊断只保存响应是否为空、长度、结束原因、JSON 解析结果、顶层键及 JSON 类型、Pydantic 错误分类与位置、缺失/多余/非法枚举字段和不可逆 SHA-256。它不保存完整模型响应、Prompt、问题文本、原始数据或密钥。
 
 ### 稳定结果契约
 
@@ -439,6 +486,6 @@ V2 的生产 DeepSeek 路径不再让模型生成底层工具步骤。当前执�
 
 Fake Provider 及现有旧计划对象继续作为测试和迁移兼容路径。配置为 DeepSeek 时，主路径固定使用 `generate_intent → PlanCompiler`，不再依赖模型生成完整 AnalysisPlan，也不在工具失败后让模型修补底层步骤。
 
-当前尚未实现通用 DomainPack 系统、任意行业工作流、任意 Python/SQL、交互式图表编辑器或全部 V1 工具迁移。未来可以通过新的领域包扩展意图和编译规则，但这不是当前已完成能力。
+当前尚未实现通用 DomainPack 系统、第三种工作流、任意行业工作流、任意 Python/SQL、交互式图表编辑器或全部 V1 工具迁移。未来可以把逻辑字段注册表、最小意图和编译规则封装为新的领域包进行扩展，但这只是扩展方向，不是当前已完成能力。
 
 测试全部使用临时 SQLite、匿名 CSV/XLSX、临时图表目录和 `httpx.MockTransport`，不读取真实 `app.db`，不调用真实 LLM，不在仓库 storage 留下测试图片。

@@ -144,6 +144,13 @@ class AnalysisExecutor:
                 run.context_snapshot_json = {
                     **(run.context_snapshot_json or {}),
                     "intent_mode": intent_mode,
+                    "intent_diagnostics": list(
+                        getattr(
+                            self.provider,
+                            "last_intent_diagnostics",
+                            [],
+                        )
+                    ),
                 }
                 self.events.emit(
                     session,

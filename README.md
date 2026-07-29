@@ -123,7 +123,7 @@ cd frontend && npm run dev
 
 ### 最小 V2 后端
 
-仓库同时包含可切换 Fake/DeepSeek Provider 的 `/api/v2` 分析闭环。当前产品定位为在线学习运营分析：DeepSeek 只识别高层分析意图，服务端 `PlanCompiler` 为分组对比和月度趋势生成确定性步骤，`ChartPlanner` 按结果元数据自动拆分图表，pandas 负责全部业务计算。默认 Fake 模式不需要密钥；结论只基于本次 Run 的聚合证据，结构化结论失败时可安全降级。迁移、启动、API、SSE、配置、能力边界和 V1/V2 共存说明见 [最小 V2 后端运行说明](docs/v2/MINIMAL_V2_BACKEND.md)。
+仓库同时包含可切换 Fake/DeepSeek Provider 的 `/api/v2` 分析闭环。当前产品定位为在线学习运营分析，只支持 `group_comparison`（分组对比）和 `monthly_trend`（月度趋势）两类工作流。DeepSeek 只选择工作流和有限的逻辑维度、指标 ID；来源字段、聚合方式、日期语义、执行步骤和图表规则均由服务端注册表与编译器决定。无法可靠归入这两类的问题会被明确拒绝，不会退化为任意分析。默认 Fake 模式不需要密钥；结论只基于本次 Run 的聚合证据，结构化结论失败时可安全降级。迁移、启动、API、SSE、配置、能力边界和 V1/V2 共存说明见 [最小 V2 后端运行说明](docs/v2/MINIMAL_V2_BACKEND.md)。
 
 ## 使用流程
 
