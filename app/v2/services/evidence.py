@@ -189,6 +189,12 @@ class EvidenceRegistry:
                 cls._numeric_summary_values(summary)
             ):
                 unit = cls._infer_unit(path, value)
+                dimensions = cls._summary_dimensions(summary, path)
+                display_value = cls._format_value(value, unit)
+                if "change_rate" in path and isinstance(
+                    value, (int, float)
+                ):
+                    display_value = f"{float(value) * 100:.2f}%"
                 items.append(
                     EvidenceItem(
                         key=(
@@ -200,9 +206,9 @@ class EvidenceRegistry:
                         source_tool=source_tool,
                         label=path,
                         value=value,
-                        display_value=cls._format_value(value, unit),
+                        display_value=display_value,
                         unit=unit,
-                        dimensions={},
+                        dimensions=dimensions,
                     )
                 )
         return cls(run_id, items)
@@ -371,3 +377,25 @@ class EvidenceRegistry:
             for index, nested in enumerate(value):
                 nested_path = f"{path}.{index}" if path else str(index)
                 yield from cls._numeric_summary_values(nested, nested_path)
+
+    @staticmethod
+    def _summary_dimensions(
+        summary: dict[str, Any],
+        path: str,
+    ) -> dict[str, str]:
+        current: Any = summary
+        parts = path.split(".")
+        for part in parts[:-1]:
+            if isinstance(current, dict):
+                current = current.get(part)
+            elif isinstance(current, list) and part.isdigit():
+                current = current[int(part)]
+            else:
+                return {}
+        if not isinstance(current, dict):
+            return {}
+        return {
+            str(field): str(value)
+            for field, value in current.items()
+            if isinstance(value, str)
+        }

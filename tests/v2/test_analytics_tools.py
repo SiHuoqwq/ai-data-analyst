@@ -243,6 +243,38 @@ def test_monthly_trend_is_chronological_and_keeps_category_series(course_file):
         "fastest_growth": {"category": "A", "change_rate": 0.0},
         "largest_decline": {"category": "A", "change_rate": 0.0},
         "most_volatile": {"category": "A", "change_rate_stddev": 0.0},
+        "by_metric": {
+            "报名人数": {
+                "fastest_growth": {"category": "A", "change_rate": 0.0},
+                "largest_decline": {"category": "A", "change_rate": 0.0},
+                "most_volatile": {
+                    "category": "A",
+                    "change_rate_stddev": 0.0,
+                },
+            },
+            "实付金额": {
+                "fastest_growth": {"category": "B", "change_rate": 0.1},
+                "largest_decline": {"category": "A", "change_rate": -0.2},
+                "most_volatile": {
+                    "category": "A",
+                    "change_rate_stddev": 0.0,
+                },
+            },
+            "平均完成率": {
+                "fastest_growth": {
+                    "category": "B",
+                    "change_rate": -0.222222,
+                },
+                "largest_decline": {
+                    "category": "A",
+                    "change_rate": -0.5,
+                },
+                "most_volatile": {
+                    "category": "A",
+                    "change_rate_stddev": 0.0,
+                },
+            },
+        },
     }
     assert table_rows(result) == [
         {
@@ -293,9 +325,25 @@ def test_monthly_trend_signals_use_full_result_before_preview_limit(course_file)
     )
 
     assert len(table_rows(result)) == 2
+    assert len(result.dataframe) == 4
     assert result.truncated is True
     assert result.summary["trend_signals"] == {
         "primary_metric": "实付金额",
+        "fastest_growth": {"category": "B", "change_rate": 0.1},
+        "largest_decline": {"category": "A", "change_rate": -0.2},
+        "most_volatile": {"category": "A", "change_rate_stddev": 0.0},
+        "by_metric": {
+            "实付金额": {
+                "fastest_growth": {"category": "B", "change_rate": 0.1},
+                "largest_decline": {"category": "A", "change_rate": -0.2},
+                "most_volatile": {
+                    "category": "A",
+                    "change_rate_stddev": 0.0,
+                },
+            }
+        },
+    }
+    assert result.summary["trend_signals"]["by_metric"]["实付金额"] == {
         "fastest_growth": {"category": "B", "change_rate": 0.1},
         "largest_decline": {"category": "A", "change_rate": -0.2},
         "most_volatile": {"category": "A", "change_rate_stddev": 0.0},

@@ -158,6 +158,26 @@ class DeterministicGroundedAnswerRenderer:
             }
         )
         lines = []
+        signal_labels = {
+            "fastest_growth.change_rate": "增长最快的类别",
+            "largest_decline.change_rate": "下降最大的类别",
+            "most_volatile.change_rate_stddev": "波动最大的类别",
+        }
+        for item in monthly:
+            marker = ".by_metric."
+            if marker not in item.label:
+                continue
+            tail = item.label.split(marker, 1)[1]
+            metric, _, signal_path = tail.partition(".")
+            description = signal_labels.get(signal_path)
+            category = item.dimensions.get("category")
+            if not description or not category:
+                continue
+            lines.append(
+                f"- {metric}{description}为{category}："
+                f"{item.display_value}。"
+            )
+
         if months:
             lines.extend(
                 [

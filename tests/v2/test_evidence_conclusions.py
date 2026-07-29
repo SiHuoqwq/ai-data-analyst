@@ -7,6 +7,9 @@ from app.v2.services.evidence import (
     EvidenceRegistry,
 )
 from app.v2.services.markdown_renderer import ConclusionMarkdownRenderer
+from app.v2.services.deterministic_renderer import (
+    DeterministicGroundedAnswerRenderer,
+)
 
 
 def evidence_payload():
@@ -155,6 +158,60 @@ def test_renderer_injects_values_without_internal_keys_or_uuids():
     assert "evidence." not in markdown
     assert "e1" not in markdown
     assert "4a405bae-50e7-46ab-a195-9630d03736fb" not in markdown
+
+
+def test_deterministic_renderer_uses_complete_monthly_trend_signals():
+    evidence = [
+        {
+            "artifact_id": "monthly-table",
+            "artifact_type": "table",
+            "source_tool": "monthly_trend",
+            "title": "月度趋势",
+            "summary": {
+                "trend_signals": {
+                    "by_metric": {
+                        "报名人数": {
+                            "fastest_growth": {
+                                "category": "职场英语",
+                                "change_rate": 1.0,
+                            },
+                            "largest_decline": {
+                                "category": "AI 应用",
+                                "change_rate": -0.6,
+                            },
+                            "most_volatile": {
+                                "category": "商业分析",
+                                "change_rate_stddev": 1.466112,
+                            },
+                        }
+                    }
+                }
+            },
+            "preview": [
+                {
+                    "月份": "2025-01",
+                    "课程类别": "AI 应用",
+                    "报名人数": 10,
+                },
+                {
+                    "月份": "2026-06",
+                    "课程类别": "AI 应用",
+                    "报名人数": 4,
+                },
+            ],
+            "warnings": [],
+        }
+    ]
+    registry = EvidenceRegistry.from_tool_evidence("run-monthly", evidence)
+
+    markdown = DeterministicGroundedAnswerRenderer().render(
+        registry,
+        {"table", "chart"},
+    )
+
+    assert "报名人数增长最快的类别为职场英语：100.00%" in markdown
+    assert "报名人数下降最大的类别为AI 应用：-60.00%" in markdown
+    assert "报名人数波动最大的类别为商业分析：146.61%" in markdown
 
 
 def test_compact_aliases_are_stable_and_bound_to_the_current_run():

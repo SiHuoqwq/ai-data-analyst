@@ -462,74 +462,91 @@ class StructuredAnalysisTools:
         warnings = (
             [f"{invalid_count} 条记录的日期无效，已排除"] if invalid_count else []
         )
-        primary_metric = validated["metrics"][0]["alias"]
         category_field = validated["category_field"]
-        trend_rows = []
-        for category, subset in full_result.groupby(category_field, dropna=False):
-            values = pd.to_numeric(
-                subset.sort_values("月份")[primary_metric], errors="coerce"
-            ).dropna()
-            if values.empty:
-                continue
-            first = float(values.iloc[0])
-            last = float(values.iloc[-1])
-            change_rate = (last - first) / abs(first) if first else 0.0
-            period_changes = (
-                values.pct_change()
-                .replace([float("inf"), float("-inf")], pd.NA)
-                .dropna()
+        metric_signals = {}
+        for metric in validated["metrics"]:
+            metric_name = metric["alias"]
+            trend_rows = []
+            for category, subset in full_result.groupby(
+                category_field, dropna=False
+            ):
+                values = pd.to_numeric(
+                    subset.sort_values("月份")[metric_name],
+                    errors="coerce",
+                ).dropna()
+                if values.empty:
+                    continue
+                first = float(values.iloc[0])
+                last = float(values.iloc[-1])
+                change_rate = (
+                    (last - first) / abs(first) if first else 0.0
+                )
+                period_changes = (
+                    values.pct_change()
+                    .replace([float("inf"), float("-inf")], pd.NA)
+                    .dropna()
+                )
+                volatility = (
+                    float(period_changes.std(ddof=0))
+                    if len(period_changes)
+                    else 0.0
+                )
+                trend_rows.append(
+                    {
+                        "category": str(category),
+                        "change_rate": round(change_rate, 6),
+                        "change_rate_stddev": round(volatility, 6),
+                    }
+                )
+            ordered = sorted(
+                trend_rows, key=lambda item: item["category"]
             )
-            volatility = (
-                float(period_changes.std(ddof=0))
-                if len(period_changes)
-                else 0.0
-            )
-            trend_rows.append(
-                {
-                    "category": str(category),
-                    "change_rate": round(change_rate, 6),
-                    "change_rate_stddev": round(volatility, 6),
-                }
-            )
-        ordered = sorted(trend_rows, key=lambda item: item["category"])
+            metric_signals[metric_name] = {
+                "fastest_growth": (
+                    {
+                        "category": max(
+                            ordered, key=lambda item: item["change_rate"]
+                        )["category"],
+                        "change_rate": max(
+                            item["change_rate"] for item in ordered
+                        ),
+                    }
+                    if ordered
+                    else None
+                ),
+                "largest_decline": (
+                    {
+                        "category": min(
+                            ordered, key=lambda item: item["change_rate"]
+                        )["category"],
+                        "change_rate": min(
+                            item["change_rate"] for item in ordered
+                        ),
+                    }
+                    if ordered
+                    else None
+                ),
+                "most_volatile": (
+                    {
+                        "category": max(
+                            ordered,
+                            key=lambda item: item[
+                                "change_rate_stddev"
+                            ],
+                        )["category"],
+                        "change_rate_stddev": max(
+                            item["change_rate_stddev"] for item in ordered
+                        ),
+                    }
+                    if ordered
+                    else None
+                ),
+            }
+        primary_metric = validated["metrics"][0]["alias"]
         trend_signals = {
             "primary_metric": primary_metric,
-            "fastest_growth": (
-                {
-                    "category": max(
-                        ordered, key=lambda item: item["change_rate"]
-                    )["category"],
-                    "change_rate": max(
-                        item["change_rate"] for item in ordered
-                    ),
-                }
-                if ordered
-                else None
-            ),
-            "largest_decline": (
-                {
-                    "category": min(
-                        ordered, key=lambda item: item["change_rate"]
-                    )["category"],
-                    "change_rate": min(
-                        item["change_rate"] for item in ordered
-                    ),
-                }
-                if ordered
-                else None
-            ),
-            "most_volatile": (
-                {
-                    "category": max(
-                        ordered, key=lambda item: item["change_rate_stddev"]
-                    )["category"],
-                    "change_rate_stddev": max(
-                        item["change_rate_stddev"] for item in ordered
-                    ),
-                }
-                if ordered
-                else None
-            ),
+            **metric_signals[primary_metric],
+            "by_metric": metric_signals,
         }
         summary = {
             "description": "按月份和类别统计趋势",
@@ -555,7 +572,7 @@ class StructuredAnalysisTools:
             warnings,
             [draft],
             validated,
-            result,
+            full_result.reset_index(drop=True),
         )
 
     def _underperforming(
