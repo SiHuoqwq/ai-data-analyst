@@ -1,6 +1,6 @@
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 
 from app.v2.schemas.analysis import (
     Aggregation,
@@ -10,6 +10,23 @@ from app.v2.schemas.analysis import (
 
 
 AnalysisType = Literal["group_comparison", "monthly_trend"]
+DimensionId = Literal[
+    "course_category",
+    "course_difficulty",
+    "purchase_channel",
+    "primary_device",
+]
+GroupMetricId = Literal[
+    "enrollment_count",
+    "completion_rate",
+    "refund_rate",
+    "rating",
+]
+MonthlyMetricId = Literal[
+    "enrollment_count",
+    "paid_amount",
+    "completion_rate",
+]
 MetricSemantic = Literal[
     "报名人数",
     "实付金额",
@@ -25,6 +42,39 @@ SEMANTIC_AGGREGATIONS: dict[str, set[str]] = {
     "退款率": {"rate", "mean"},
     "平均评分": {"mean"},
 }
+
+
+def _deduplicate(values: list[str]) -> list[str]:
+    return list(dict.fromkeys(values))
+
+
+class GroupComparisonIntent(StrictAnalysisModel):
+    workflow: Literal["group_comparison"]
+    dimensions: list[DimensionId] = Field(min_length=1, max_length=4)
+    metric_ids: list[GroupMetricId] = Field(min_length=1, max_length=4)
+    detect_underperforming: bool = False
+
+    @field_validator("dimensions", "metric_ids", mode="before")
+    @classmethod
+    def deduplicate_ids(cls, values):
+        return _deduplicate(values)
+
+
+class MonthlyTrendIntent(StrictAnalysisModel):
+    workflow: Literal["monthly_trend"]
+    series_dimension: DimensionId
+    metric_ids: list[MonthlyMetricId] = Field(min_length=1, max_length=3)
+
+    @field_validator("metric_ids", mode="before")
+    @classmethod
+    def deduplicate_ids(cls, values):
+        return _deduplicate(values)
+
+
+DomainIntent = Annotated[
+    GroupComparisonIntent | MonthlyTrendIntent,
+    Field(discriminator="workflow"),
+]
 
 
 class IntentMetric(StrictAnalysisModel):

@@ -5,35 +5,19 @@ import pytest
 from pydantic import ValidationError
 
 from app.db.models import FileModel
-from app.v2.schemas.intents import AnalysisIntent
+from app.v2.schemas.intents import MonthlyTrendIntent
 from app.v2.services.provider import DeepSeekProvider, ProviderError
 
 
 def monthly_intent_payload():
     return {
-        "analysis_type": "monthly_trend",
-        "dimensions": ["课程类别"],
-        "date_field": "报名日期",
-        "metrics": [
-            {
-                "semantic": "报名人数",
-                "source_field": None,
-                "aggregation": "count",
-            },
-            {
-                "semantic": "实付金额",
-                "source_field": "实付金额",
-                "aggregation": "sum",
-            },
-            {
-                "semantic": "平均完成率",
-                "source_field": "课程完成率",
-                "aggregation": "mean",
-            },
+        "workflow": "monthly_trend",
+        "series_dimension": "course_category",
+        "metric_ids": [
+            "enrollment_count",
+            "paid_amount",
+            "completion_rate",
         ],
-        "filters": [],
-        "needs_visualization": True,
-        "include_underperforming": False,
     }
 
 
@@ -72,37 +56,37 @@ def provider_with(handler):
 
 
 def test_monthly_intent_accepts_only_high_level_fields():
-    intent = AnalysisIntent.model_validate(monthly_intent_payload())
+    intent = MonthlyTrendIntent.model_validate(monthly_intent_payload())
 
-    assert intent.analysis_type == "monthly_trend"
-    assert intent.date_field == "报名日期"
-    assert [metric.semantic for metric in intent.metrics] == [
-        "报名人数",
-        "实付金额",
-        "平均完成率",
+    assert intent.workflow == "monthly_trend"
+    assert intent.series_dimension == "course_category"
+    assert intent.metric_ids == [
+        "enrollment_count",
+        "paid_amount",
+        "completion_rate",
     ]
 
-    for forbidden in ("source_step_id", "x_field", "tool", "steps"):
+    for forbidden in (
+        "source_field",
+        "aggregation",
+        "date_field",
+        "filters",
+        "source_step_id",
+        "x_field",
+        "tool",
+        "steps",
+    ):
         payload = monthly_intent_payload()
         payload[forbidden] = "model-controlled"
         with pytest.raises(ValidationError):
-            AnalysisIntent.model_validate(payload)
+            MonthlyTrendIntent.model_validate(payload)
 
 
 @pytest.mark.parametrize(
     ("field", "value"),
     [
-        ("analysis_type", "free_form"),
-        (
-            "metrics",
-            [
-                {
-                    "semantic": "利润率",
-                    "source_field": "利润",
-                    "aggregation": "mean",
-                }
-            ],
-        ),
+        ("workflow", "free_form"),
+        ("metric_ids", ["profit_rate"]),
     ],
 )
 def test_intent_rejects_unsupported_domain_values(field, value):
@@ -110,7 +94,7 @@ def test_intent_rejects_unsupported_domain_values(field, value):
     payload[field] = value
 
     with pytest.raises(ValidationError):
-        AnalysisIntent.model_validate(payload)
+        MonthlyTrendIntent.model_validate(payload)
 
 
 def test_deepseek_generates_intent_without_low_level_plan_fields():
@@ -140,16 +124,22 @@ def test_deepseek_generates_intent_without_low_level_plan_fields():
         file_record(),
     )
 
-    assert intent.analysis_type == "monthly_trend"
-    prompt = json.dumps(captured["body"], ensure_ascii=False)
+    assert intent.workflow == "monthly_trend"
+    body = captured["body"]
+    prompt = json.dumps(body["messages"], ensure_ascii=False)
+    prompt_payload = json.loads(body["messages"][1]["content"])
     assert "在线学习运营" in prompt
-    assert "不得生成 source_step_id" in prompt
-    assert "不得生成 x_field" in prompt
+    assert [
+        item["workflow"]
+        for item in prompt_payload["valid_json_examples"]
+    ] == ["group_comparison", "monthly_trend"]
     assert "allowed_tools" not in prompt
     assert "create_chart" not in prompt
-    assert captured["body"]["response_format"] == {
-        "type": "json_object"
-    }
+    assert "source_step_id" not in prompt
+    assert "source_field" not in prompt
+    assert "aggregation" not in prompt
+    assert body["response_format"] == {"type": "json_object"}
+    assert body["max_tokens"] == 1000
 
 
 def test_deepseek_repairs_invalid_intent_at_most_once():
@@ -179,12 +169,26 @@ def test_deepseek_repairs_invalid_intent_at_most_once():
         file_record(),
     )
 
-    assert intent.analysis_type == "monthly_trend"
+    assert intent.workflow == "monthly_trend"
     assert calls == 2
     assert all(
         body["response_format"] == {"type": "json_object"}
         for body in request_bodies
     )
+    assert all(body["max_tokens"] == 1000 for body in request_bodies)
+    repair_prompt = json.dumps(
+        request_bodies[1]["messages"],
+        ensure_ascii=False,
+    )
+    repair_payload = json.loads(
+        request_bodies[1]["messages"][1]["content"]
+    )
+    assert [
+        item["workflow"]
+        for item in repair_payload["valid_json_examples"]
+    ] == ["group_comparison", "monthly_trend"]
+    assert "validation_issues" in repair_prompt
+    assert "unsupported" not in repair_prompt
 
 
 def test_deepseek_fails_after_single_intent_repair():
@@ -200,7 +204,7 @@ def test_deepseek_fails_after_single_intent_repair():
                     {
                         "message": {
                             "content": json.dumps(
-                                {"analysis_type": "unsupported"}
+                                {"workflow": "unsupported"}
                             )
                         }
                     }
@@ -214,5 +218,5 @@ def test_deepseek_fails_after_single_intent_repair():
             file_record(),
         )
 
-    assert exc_info.value.code == "PROVIDER_INVALID_RESPONSE"
+    assert exc_info.value.code == "INTENT_REPAIR_FAILED"
     assert calls == 2

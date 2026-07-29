@@ -5,7 +5,14 @@ import pandas as pd
 
 from app.db.models import FileModel
 from app.services.parser import parse_file
-from app.v2.schemas.intents import AnalysisIntent, IntentMetric
+from app.v2.domain.learning_registry import LearningDomainRegistry
+from app.v2.schemas.intents import (
+    AnalysisIntent,
+    DomainIntent,
+    GroupComparisonIntent,
+    IntentMetric,
+    MonthlyTrendIntent,
+)
 from app.v2.schemas.results import (
     ResultDimension,
     ResultMetric,
@@ -189,16 +196,23 @@ class PlanValidator:
 
 
 class PlanCompiler:
-    def __init__(self, validator: PlanValidator | None = None):
+    def __init__(
+        self,
+        validator: PlanValidator | None = None,
+        registry: LearningDomainRegistry | None = None,
+    ):
         self.validator = validator or PlanValidator(
             dataframe_loader=parse_file
         )
+        self.registry = registry or LearningDomainRegistry()
 
     def compile(
         self,
-        intent: AnalysisIntent,
+        intent: DomainIntent | AnalysisIntent,
         file_record: FileModel,
     ) -> CompiledPlan:
+        if isinstance(intent, (GroupComparisonIntent, MonthlyTrendIntent)):
+            intent = self._resolve_domain_intent(intent)
         self.validator.validate_intent_fields(intent, file_record)
         if intent.analysis_type == "monthly_trend":
             return self._compile_monthly(intent)
@@ -207,6 +221,45 @@ class PlanCompiler:
         raise PlanCompilationError(
             "UNSUPPORTED_ANALYSIS_INTENT",
             "当前分析类型不在支持范围内",
+        )
+
+    def _resolve_domain_intent(
+        self,
+        intent: GroupComparisonIntent | MonthlyTrendIntent,
+    ) -> AnalysisIntent:
+        if isinstance(intent, GroupComparisonIntent):
+            return AnalysisIntent(
+                analysis_type="group_comparison",
+                dimensions=[
+                    self.registry.dimension(item).source_field
+                    for item in intent.dimensions
+                ],
+                metrics=[
+                    self._resolved_metric(item)
+                    for item in intent.metric_ids
+                ],
+                include_underperforming=intent.detect_underperforming,
+            )
+        return AnalysisIntent(
+            analysis_type="monthly_trend",
+            dimensions=[
+                self.registry.dimension(
+                    intent.series_dimension
+                ).source_field
+            ],
+            date_field=self.registry.date("enrollment_date").source_field,
+            metrics=[
+                self._resolved_metric(item)
+                for item in intent.metric_ids
+            ],
+        )
+
+    def _resolved_metric(self, metric_id: str) -> IntentMetric:
+        definition = self.registry.metric(metric_id)
+        return IntentMetric(
+            semantic=definition.semantic,
+            source_field=definition.source_field,
+            aggregation=definition.aggregation,
         )
 
     def _compile_monthly(self, intent: AnalysisIntent) -> CompiledPlan:

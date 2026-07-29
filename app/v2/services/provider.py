@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Protocol
 
 import httpx
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 from app.db.models import FileModel
 from app.v2.schemas.analysis import (
@@ -14,7 +14,7 @@ from app.v2.schemas.analysis import (
     PlanStepDraft,
     model_tool_catalog,
 )
-from app.v2.schemas.intents import AnalysisIntent
+from app.v2.schemas.intents import DomainIntent
 from app.v2.schemas.conclusions import (
     ConclusionFinding,
     ConclusionRecommendation,
@@ -29,6 +29,36 @@ from app.v2.services.structured_response import (
     StructuredResponseError,
     StructuredResponseParser,
 )
+
+
+DOMAIN_INTENT_ADAPTER = TypeAdapter(DomainIntent)
+DOMAIN_INTENT_EXAMPLES = [
+    {
+        "workflow": "group_comparison",
+        "dimensions": [
+            "course_category",
+            "course_difficulty",
+            "purchase_channel",
+            "primary_device",
+        ],
+        "metric_ids": [
+            "enrollment_count",
+            "completion_rate",
+            "refund_rate",
+            "rating",
+        ],
+        "detect_underperforming": True,
+    },
+    {
+        "workflow": "monthly_trend",
+        "series_dimension": "course_category",
+        "metric_ids": [
+            "enrollment_count",
+            "paid_amount",
+            "completion_rate",
+        ],
+    },
+]
 
 
 class ProviderError(RuntimeError):
@@ -104,6 +134,7 @@ class FakeAnalysisProvider:
         self.last_conclusion_aliases: EvidenceAliasMap | None = None
         self.last_conclusion_mode = "model"
         self.last_conclusion_diagnostics: list[dict[str, Any]] = []
+        self.last_intent_mode = "model"
 
     def set_history(self, history: list[dict[str, str]]) -> None:
         self.history = history
@@ -308,27 +339,24 @@ class DeepSeekProvider:
         question: str,
         file_record: FileModel,
         history: list[dict[str, str]] | None = None,
-    ) -> AnalysisIntent:
+    ) -> DomainIntent:
         if history is not None:
             self.set_history(history)
         self._require_config()
+        self.last_intent_mode = "model"
         payload = {
             "question": question[:4000],
             "dataset": self._safe_dataset_profile(file_record),
             "recent_history": self.history,
-            "supported_analysis_types": [
-                "group_comparison",
-                "monthly_trend",
-            ],
-            "intent_schema": AnalysisIntent.model_json_schema(),
+            "intent_schema": DOMAIN_INTENT_ADAPTER.json_schema(),
+            "valid_json_examples": DOMAIN_INTENT_EXAMPLES,
             "rules": [
                 "当前领域仅限在线学习运营",
-                "只返回高层 AnalysisIntent JSON 对象",
-                "不得生成步骤 ID、工具名称列表或步骤顺序",
-                "不得生成 source_step_id",
-                "不得生成 x_field 或 y_field",
-                "不得生成图表数量或图表步骤",
-                "不得生成 SQL、Python、Evidence key 或业务数字",
+                "只返回一个 JSON 对象，不要使用 Markdown 代码块",
+                "不要解释原因，不要添加未定义字段",
+                "只能使用 Schema 列出的工作流、维度 ID 和指标 ID",
+                "只识别分析意图，不计算数字",
+                "执行流程和可视化由后端决定",
             ],
         }
         content = self._chat(
@@ -347,6 +375,7 @@ class DeepSeekProvider:
             ],
             temperature=0,
             json_output=True,
+            max_tokens=1000,
         )
         try:
             return self._validate_intent_response(content)
@@ -357,16 +386,18 @@ class DeepSeekProvider:
                 initial_error,
             )
             try:
-                return self._validate_intent_response(repaired)
+                intent = self._validate_intent_response(repaired)
+                self.last_intent_mode = "repaired_model"
+                return intent
             except (StructuredResponseError, ValidationError) as exc:
                 raise ProviderError(
-                    "PROVIDER_INVALID_RESPONSE",
+                    "INTENT_REPAIR_FAILED",
                     "分析服务返回了无法执行的分析意图",
                     retryable=False,
                 ) from exc
 
-    def _validate_intent_response(self, content: str) -> AnalysisIntent:
-        return AnalysisIntent.model_validate(
+    def _validate_intent_response(self, content: str) -> DomainIntent:
+        return DOMAIN_INTENT_ADAPTER.validate_python(
             self._structured_parser.parse_object(content)
         )
 
@@ -376,13 +407,13 @@ class DeepSeekProvider:
         error: StructuredResponseError | ValidationError,
     ) -> str:
         payload = {
-            "invalid_response_excerpt": self._safe_response_excerpt(content),
             "validation_issues": self._validation_issues(error),
-            "intent_schema": AnalysisIntent.model_json_schema(),
+            "intent_schema": DOMAIN_INTENT_ADAPTER.json_schema(),
+            "valid_json_examples": DOMAIN_INTENT_EXAMPLES,
             "rules": [
-                "仅返回一个完整的 AnalysisIntent JSON 对象",
-                "不得添加步骤、工具、图表字段或内部引用",
-                "不得猜测业务数字",
+                "仅返回一个完整 JSON 对象，不要使用 Markdown",
+                "只能使用 Schema 定义的字段和逻辑 ID",
+                "不要解释、计算或添加额外字段",
             ],
         }
         return self._chat(
@@ -401,6 +432,7 @@ class DeepSeekProvider:
             ],
             temperature=0,
             json_output=True,
+            max_tokens=1000,
         )
 
     def _validate_plan_response(self, content: str) -> ModelPlanDraft:
@@ -783,6 +815,7 @@ class DeepSeekProvider:
         *,
         temperature: float,
         json_output: bool = False,
+        max_tokens: int | None = None,
     ) -> str:
         body = {
             "model": self.model,
@@ -792,6 +825,8 @@ class DeepSeekProvider:
         }
         if json_output:
             body["response_format"] = {"type": "json_object"}
+        if max_tokens is not None:
+            body["max_tokens"] = max_tokens
         for attempt in range(self.max_retries + 1):
             try:
                 response = self._client_instance().post(
