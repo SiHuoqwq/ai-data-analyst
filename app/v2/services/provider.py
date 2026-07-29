@@ -14,6 +14,7 @@ from app.v2.schemas.analysis import (
     PlanStepDraft,
     model_tool_catalog,
 )
+from app.v2.schemas.intents import AnalysisIntent
 from app.v2.schemas.conclusions import (
     ConclusionFinding,
     ConclusionRecommendation,
@@ -300,6 +301,104 @@ class DeepSeekProvider:
                 )
                 for step in draft.steps
             ),
+        )
+
+    def generate_intent(
+        self,
+        question: str,
+        file_record: FileModel,
+        history: list[dict[str, str]] | None = None,
+    ) -> AnalysisIntent:
+        if history is not None:
+            self.set_history(history)
+        self._require_config()
+        payload = {
+            "question": question[:4000],
+            "dataset": self._safe_dataset_profile(file_record),
+            "recent_history": self.history,
+            "supported_analysis_types": [
+                "group_comparison",
+                "monthly_trend",
+            ],
+            "intent_schema": AnalysisIntent.model_json_schema(),
+            "rules": [
+                "当前领域仅限在线学习运营",
+                "只返回高层 AnalysisIntent JSON 对象",
+                "不得生成步骤 ID、工具名称列表或步骤顺序",
+                "不得生成 source_step_id",
+                "不得生成 x_field 或 y_field",
+                "不得生成图表数量或图表步骤",
+                "不得生成 SQL、Python、Evidence key 或业务数字",
+            ],
+        }
+        content = self._chat(
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        "你是在线学习运营分析意图识别器。"
+                        "只返回符合给定 Schema 的 JSON 对象。"
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": self._bounded_json(payload),
+                },
+            ],
+            temperature=0,
+        )
+        try:
+            return self._validate_intent_response(content)
+        except (StructuredResponseError, ValidationError) as initial_error:
+            self._raise_if_cancelled()
+            repaired = self._repair_intent_response(
+                content,
+                initial_error,
+            )
+            try:
+                return self._validate_intent_response(repaired)
+            except (StructuredResponseError, ValidationError) as exc:
+                raise ProviderError(
+                    "PROVIDER_INVALID_RESPONSE",
+                    "分析服务返回了无法执行的分析意图",
+                    retryable=False,
+                ) from exc
+
+    def _validate_intent_response(self, content: str) -> AnalysisIntent:
+        return AnalysisIntent.model_validate(
+            self._structured_parser.parse_object(content)
+        )
+
+    def _repair_intent_response(
+        self,
+        content: str,
+        error: StructuredResponseError | ValidationError,
+    ) -> str:
+        payload = {
+            "invalid_response_excerpt": self._safe_response_excerpt(content),
+            "validation_issues": self._validation_issues(error),
+            "intent_schema": AnalysisIntent.model_json_schema(),
+            "rules": [
+                "仅返回一个完整的 AnalysisIntent JSON 对象",
+                "不得添加步骤、工具、图表字段或内部引用",
+                "不得猜测业务数字",
+            ],
+        }
+        return self._chat(
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        "修复在线学习运营分析意图的结构。"
+                        "仅返回符合 Schema 的 JSON 对象。"
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": self._bounded_json(payload),
+                },
+            ],
+            temperature=0,
         )
 
     def _validate_plan_response(self, content: str) -> ModelPlanDraft:
