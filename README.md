@@ -1,230 +1,221 @@
-# AI Data Analyst
+# 析数：AI 数据分析工作台
 
-AI 数据分析助手 — 上传 CSV/XLSX 数据，通过自然语言与 AI Agent 交互，自动完成**统计分析、图表生成和报告输出**。
+一个面向在线学习运营数据的个人作品集项目。用户可以上传 CSV/XLSX，
+查看字段质量和数据预览，并通过自然语言发起受控分析。模型只负责识别
+高层分析意图；字段映射、聚合规则、图表规划和业务数字均由服务端的
+确定性流程完成。
 
-<p align="center">
-  <img src="https://img.shields.io/badge/Python-3.10+-blue?logo=python" alt="Python">
-  <img src="https://img.shields.io/badge/FastAPI-0.115-teal?logo=fastapi" alt="FastAPI">
-  <img src="https://img.shields.io/badge/React-19-61dafb?logo=react" alt="React">
-  <img src="https://img.shields.io/badge/TypeScript-6.0-3178c6?logo=typescript" alt="TypeScript">
-  <img src="https://img.shields.io/badge/LangGraph-0.2-orange" alt="LangGraph">
-  <img src="https://img.shields.io/badge/Tailwind-4.3-38bdf8?logo=tailwindcss" alt="Tailwind">
-  <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
-</p>
+当前发布候选版同时保留 `/api/v1` 兼容能力，并提供完整的 `/api/v2`
+分析闭环、SSE 事件、结构化 Artifact、会话持久化和刷新恢复。
 
-## 功能
+## 项目亮点
 
-- **文件上传解析**：支持 CSV / XLSX，自动生成数据质量报告
-- **14 个分析工具**：统计描述、分组聚合、趋势分析、异常值检测、数据筛选排序
-- **5 种可视化图表**：柱状图、折线图、饼图、散点图、热力图（中文标题无乱码）
-- **Agent 多步推理**：LangGraph 编排，自动选择合适的工具组合
-- **SSE 过程推送**：分析过程、工具调用和图表通过 SSE 实时推送；最终回答当前不是 token 级逐字流式
-- **分析报告生成**：LLM 自动生成结构化 Markdown 报告
-- **对话持久化**：SQLite 存储所有对话历史和图表记录
+- **结果驱动工作台**：以数据集概览、指标、表格和图表为主画布，不使用
+  固定三栏聊天布局。
+- **受控领域工作流**：支持多维分组对比和月度趋势两类在线学习运营分析。
+- **确定性计算**：pandas 负责全部统计数字，模型不能生成 Python、SQL、
+  工具步骤或图表参数。
+- **可验证结论**：Evidence Registry 校验结论引用；模型结论不合法时，
+  可以基于已验证证据安全降级。
+- **可恢复运行**：AnalysisRun、RunStep、Artifact 和事件持久化；SSE
+  提供实时更新，REST 是最终事实来源。
+- **安全默认值**：默认 `V2_PROVIDER=fake`，无需密钥和外部网络即可验证
+  完整产品链路。
 
-## 界面
+## 支持范围
 
-三栏工作台布局，深色专业风：
-
-```
-┌────────────┬──────────────────────────┬────────────────┐
-│ LeftSidebar│       ChatPanel          │ ContextPanel   │
-│ (18%)      │       (60%)              │ (22%)          │
-│            │                          │                │
-│ 文件上传    │ AI 对话区                 │ 阶段指示器      │
-│ 历史文件    │ - Markdown 渲染           │ 数据概览        │
-│            │ - 工具调用卡片             │ 分析任务进度    │
-│            │ - 图表内联展示             │ 图表结果        │
-│            │ - 过程事件输出             │ 报告生成按钮    │
-└────────────┴──────────────────────────┴────────────────┘
-```
-
-## 架构
-
-```
-用户浏览器 (React + TypeScript)
-       │  HTTP + SSE
-       ▼
-   FastAPI (路由层)
-       │
-   ┌───▼────────────────────────────┐
-   │   LangGraph Agent (编排层)      │
-   │   ┌────────┐   ┌────────────┐  │
-   │   │ agent  │◄─►│ 14 Tools   │  │
-   │   └────────┘   └────────────┘  │
-   └───┬────────────────────────────┘
-       │
-   ┌───▼────────────────────────────┐
-   │   Services (业务层)             │
-   │   parser / profiler /          │
-   │   chart_engine / report_gen    │
-   └───┬────────────────────────────┘
-       │
-   ┌───▼──────────┬─────────────────┐
-   │ DeepSeek API │ SQLite (ORM)    │
-   └──────────────┴─────────────────┘
-```
+| 能力 | 当前状态 |
+|---|---|
+| CSV、XLSX 上传与数据画像 | 已实现 |
+| 数据预览、字段与缺失信息 | 已实现 |
+| Conversation / Message 多轮历史 | 已实现 |
+| AnalysisRun 生命周期与合作式取消 | 已实现 |
+| text / metric / table / chart Artifact | 已实现 |
+| SSE 实时事件与 REST 恢复 | 已实现 |
+| 多维分组对比 | 已实现 |
+| 按自然月的分类趋势分析 | 已实现 |
+| 任意行业、任意 Python/SQL 分析 | 不支持 |
+| Token 级逐字输出 | 不支持 |
+| 交互式图表编辑、报告导出、多用户权限 | 不支持 |
 
 ## 技术栈
 
-| 层级 | 技术 | 说明 |
-|------|------|------|
-| **Web 框架** | FastAPI | REST API + SSE 分析过程事件 |
-| **Agent 编排** | LangGraph + LangChain | StateGraph, Tool Calling, astream |
-| **LLM** | DeepSeek API (`deepseek-chat`) | 默认 Provider；OpenAI Provider 仅预留，尚未实现 |
-| **数据处理** | pandas + numpy | CSV/XLSX 解析、统计、聚合、过滤 |
-| **可视化** | matplotlib + seaborn | 5 种图表，SimHei 中文字体 |
-| **数据库** | SQLite + SQLAlchemy | 文件、对话、消息、图表 4 表 |
-| **前端** | React 19 + TypeScript 6 | SPA，17 个组件 |
-| **构建** | Vite 8 + Tailwind CSS 4 | HMR + 暗色主题 |
-| **Markdown** | react-markdown + remark-gfm | AI 回复渲染 |
-| **测试** | pytest + pytest-asyncio | 单元测试 + API 主链路集成测试 |
+- 后端：Python 3.10、FastAPI 0.115、SQLAlchemy 2、Alembic、Pydantic
+- 分析：pandas、NumPy、matplotlib、seaborn
+- 模型：DeepSeek（可选）；Fake Provider（默认）
+- 前端：React 19、TypeScript 5.9、Vite 7、TanStack Query、Tailwind CSS 4
+- 测试：pytest、Vitest、React Testing Library、jsdom
+- 存储：SQLite 与本地文件系统
+
+## 核心链路
+
+```mermaid
+flowchart LR
+    A["上传 CSV / XLSX"] --> B["数据集概览"]
+    B --> C["提交分析问题"]
+    C --> D["识别高层 AnalysisIntent"]
+    D --> E["PlanCompiler 编译固定工作流"]
+    E --> F["PlanValidator 执行前校验"]
+    F --> G["pandas 确定性计算"]
+    G --> H["ChartPlanner 生成图表规格"]
+    H --> I["Artifact 与 Evidence 持久化"]
+    I --> J["结构化结论或确定性降级"]
+    J --> K["SSE 更新与 REST 恢复"]
+```
+
+完整架构见 [docs/release/ARCHITECTURE.md](docs/release/ARCHITECTURE.md)。
 
 ## 快速开始
 
-### 前置要求
+### 环境要求
 
 - Python 3.10+
-- Node.js 18+
-- DeepSeek API Key（[申请地址](https://platform.deepseek.com)）
+- Node.js 20+（推荐 Node.js 22）
+- npm 10+
 
-### 安装
+### 1. 安装
 
-```bash
-# 克隆仓库
+```powershell
 git clone https://github.com/SiHuoqwq/ai-data-analyst.git
 cd ai-data-analyst
 
-# 安装 Python 依赖
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
+Copy-Item .env.example .env
 
-# 配置 API Key
-cp .env.example .env
-# 编辑 .env，填入 DEEPSEEK_API_KEY=sk-xxxxx
-# BACKEND_HOST、BACKEND_PORT 和 FRONTEND_ORIGIN 也由该文件统一配置
-
-# 安装前端依赖
-cd frontend && npm install && cd ..
+Set-Location frontend-v2
+npm ci
+Set-Location ..
 ```
 
-### 启动
+`.env.example` 默认使用 Fake Provider：
 
-```bash
-# 终端 1：启动后端（读取根目录 .env）
-py -m app.run
-
-# 终端 2：启动前端
-cd frontend && npm run dev
+```dotenv
+V2_PROVIDER=fake
+DATABASE_URL=sqlite:///./app.db
+BACKEND_HOST=127.0.0.1
+BACKEND_PORT=8000
+FRONTEND_ORIGIN=http://localhost:5174
 ```
 
-打开 http://localhost:5173 开始使用。
+不要把真实 API Key 提交到 Git。
 
-默认后端地址为 `http://127.0.0.1:8000`。`app.run`、CORS 和 Vite 开发代理均读取根目录 `.env` 中的同一套配置。
+### 2. 启动后端
 
-### 最小 V2 后端
+Windows 可以运行：
 
-仓库同时包含可切换 Fake/DeepSeek Provider 的 `/api/v2` 分析闭环。当前产品定位为在线学习运营分析，只支持 `group_comparison`（分组对比）和 `monthly_trend`（月度趋势）两类工作流。DeepSeek 只选择工作流和有限的逻辑维度、指标 ID；来源字段、聚合方式、日期语义、执行步骤和图表规则均由服务端注册表与编译器决定。无法可靠归入这两类的问题会被明确拒绝，不会退化为任意分析。默认 Fake 模式不需要密钥；结论只基于本次 Run 的聚合证据，结构化结论失败时可安全降级。迁移、启动、API、SSE、配置、能力边界和 V1/V2 共存说明见 [最小 V2 后端运行说明](docs/v2/MINIMAL_V2_BACKEND.md)。
-
-## 使用流程
-
-1. 上传 CSV 或 Excel 数据文件
-2. 左侧自动显示文件信息，右侧显示数据概览
-3. 在聊天框输入自然语言问题，例如：
-   - "分析一下这份数据的基本情况"
-   - "画一张月度销售额柱状图"
-   - "做相关性分析，画热力图"
-   - "检测 sales 列的异常值"
-4. AI Agent 自动选择工具、执行分析、生成图表
-5. 分析完成后点击"生成分析报告"导出完整报告
-
-## API 端点
-
-| 方法 | 端点 | 说明 |
-|------|------|------|
-| `POST` | `/api/v1/files/upload` | 上传 CSV/XLSX 文件 |
-| `GET` | `/api/v1/files` | 文件列表 |
-| `GET` | `/api/v1/files/{id}` | 文件详情（含列信息 + 数据画像） |
-| `GET` | `/api/v1/files/{id}/preview` | 文件预览（前 N 行） |
-| `POST` | `/api/v1/chat/stream` | SSE 分析过程推送（Agent 自动调用工具） |
-| `POST` | `/api/v1/report/generate` | 根据指定对话生成 Markdown 分析报告 |
-| `GET` | `/health` | 健康检查 |
-
-SSE 事件类型：`tool` | `text` | `chart` | `error` | `done`。`text` 当前通常是完整回答片段，不代表模型 token 级流式。
-
-## 分析工具（14 个）
-
-| 分类 | 工具 | 功能 |
-|------|------|------|
-| **统计** | `describe_data` | 数值列均值/标准差/四分位数 |
-| | `value_counts` | 列值分布 Top N |
-| | `correlation_analysis` | 数值列相关系数矩阵 |
-| **聚合** | `group_analysis` | 分组聚合（mean/sum/count/min/max） |
-| | `filter_data` | 条件筛选（eq/gt/lt/ge/le/contains） |
-| | `sort_data` | 排序取 Top N |
-| **分析** | `trend_analysis` | 前后半段均值变化趋势 |
-| | `detect_outliers` | IQR 异常值检测 |
-| | `data_summary` | 综合摘要 |
-| **可视化** | `draw_bar_chart` | 柱状图 |
-| | `draw_line_chart` | 折线图 |
-| | `draw_pie_chart` | 饼图 |
-| | `draw_scatter_chart` | 散点图 |
-| | `draw_heatmap_chart` | 相关系数热力图 |
-
-## 项目结构
-
+```powershell
+.\start.bat
 ```
-ai-data-analyst/
-├── app/
-│   ├── main.py              # FastAPI 入口
-│   ├── config.py            # 环境变量配置
-│   ├── api/                 # 路由层
-│   │   ├── files.py         # 文件上传/查询 (4 endpoints)
-│   │   ├── chat.py          # SSE 分析过程事件
-│   │   └── report.py        # 报告生成
-│   ├── services/            # 业务层
-│   │   ├── agent.py         # LangGraph Agent 编排
-│   │   ├── parser.py        # CSV/XLSX 解析
-│   │   ├── profiler.py      # 数据质量分析
-│   │   ├── chart_engine.py  # matplotlib 图表引擎
-│   │   ├── report_generator.py  # LLM 报告生成
-│   │   ├── tools/           # 14 个分析工具
-│   │   │   ├── statistics.py    # 统计工具
-│   │   │   ├── aggregation.py   # 聚合工具
-│   │   │   ├── analysis.py      # 分析工具
-│   │   │   └── visualization.py # 可视化工具
-│   │   └── llm/             # LLM Provider 抽象层
-│   │       ├── base.py      # 抽象基类
-│   │       ├── factory.py   # 工厂函数
-│   │       ├── deepseek.py  # DeepSeek 实现
-│   │       └── openai.py    # OpenAI 预留
-│   ├── models/              # Pydantic Schema
-│   │   ├── chat.py
-│   │   └── file.py
-│   └── db/                  # 数据库层
-│       ├── database.py      # SQLAlchemy 引擎
-│       ├── models.py        # 4 张 ORM 模型
-│       └── conversation_store.py  # 对话 CRUD
-├── frontend/
-│   └── src/
-│       ├── App.tsx          # 根组件（三栏布局）
-│       ├── api/             # API 客户端
-│       ├── types/           # TypeScript 类型
-│       └── components/
-│           ├── layout/      # TopBar, Sidebars, ChatPanel
-│           ├── chat/        # MessageList, ChatInput, ChartInline
-│           ├── context/     # DataOverview, TaskProgress, ResultsView
-│           └── files/       # FileUploadZone, FileHistoryList
-├── tests/                   # pytest (15 tests)
-├── storage/                 # 上传文件 + 图表图片
-├── requirements.txt
-└── README.md
+
+脚本会明确执行数据库迁移。迁移失败时返回非零退出码并停止，不会继续启动
+后端。FastAPI 自身不会自动执行 Alembic。
+
+手动启动时：
+
+```powershell
+python -m app.migrate
+python -m app.run
 ```
+
+后端地址：`http://127.0.0.1:8000`。
+
+### 3. 启动 Frontend V2
+
+另开一个终端：
+
+```powershell
+Set-Location frontend-v2
+npm run dev
+```
+
+打开 `http://localhost:5174`。
+
+## 数据库迁移安全
+
+- FastAPI 启动只检查 Alembic revision，不自动迁移。
+- 缺少 V2 revision 时，`/health` 和 `/api/v2` 返回
+  `503 DATABASE_MIGRATION_REQUIRED`。
+- `alembic downgrade base` 只能用于新建、可丢弃的临时数据库。
+- 真实 `app.db` 在发布验证中只做时间戳和 SHA-256 检查。
+- 迁移兼容性验证应对仓库外副本执行 `upgrade head`、重复升级、
+  行数检查和 `PRAGMA foreign_key_check`。
+
+详细步骤见 [docs/release/DEPLOYMENT.md](docs/release/DEPLOYMENT.md)。
 
 ## 运行测试
 
-```bash
-py -m pytest tests/ -v
+后端：
+
+```powershell
+$env:PYTHONDONTWRITEBYTECODE = "1"
+python -m pytest -q
+python -m compileall -q app tests alembic
 ```
+
+前端：
+
+```powershell
+Set-Location frontend-v2
+npm run typecheck
+npm run lint
+npm test
+npm run build
+```
+
+自动测试使用临时数据库、匿名数据和 Fake/Mock Provider，不调用真实
+DeepSeek。
+
+## 演示
+
+无密钥演示使用 Fake Provider，可验证上传、会话、Run、SSE、Artifact、
+取消和刷新恢复。Fake Provider 不解释任意业务问题，它只产生稳定的测试
+结果。
+
+真实 DeepSeek 模式只支持：
+
+1. 课程类别、课程难度、购买渠道和主要学习设备的多维对比；
+2. 按月份和课程类别统计报名人数、实付金额和平均完成率趋势。
+
+演示步骤和推荐问题见
+[docs/release/DEMO_GUIDE.md](docs/release/DEMO_GUIDE.md)。
+
+## 目录
+
+```text
+app/
+├── api/                 # V1 兼容接口
+├── db/                  # V1 ORM、数据库连接与 revision 检查
+├── services/            # V1 Agent、解析、画像和图表能力
+└── v2/
+    ├── api/             # V2 REST / SSE
+    ├── db/              # Run、Step、Artifact、Event
+    ├── domain/          # 领域注册表、Intent 路由与工作流编译
+    ├── schemas/         # API、Intent、Artifact、Event Schema
+    └── services/        # 执行器、分析、图表、Evidence、Provider
+frontend-v2/             # 当前 React 工作台
+frontend/                # 保留的 V1 前端
+alembic/                 # 增量迁移
+tests/                   # V1/V2、迁移、Provider 与端到端测试
+docs/release/            # 架构、部署与演示材料
+```
+
+## 当前限制
+
+- V2 仍使用 V1 `files` 作为过渡期数据集版本标识。
+- Fake Provider 用于链路验证，不代表真实自然语言理解效果。
+- DeepSeek 模式读取有限历史帮助理解追问，但所有数字仍由当前 Run
+  重新计算。
+- 图表为服务端生成的 PNG，不支持交互编辑。
+- 合作式取消无法强制中断已经进入执行的同步 pandas/matplotlib 函数。
+- `frontend/` 仅为 V1 兼容参考，当前产品界面位于 `frontend-v2/`。
+
+## 进一步阅读
+
+- [发布架构](docs/release/ARCHITECTURE.md)
+- [部署与迁移](docs/release/DEPLOYMENT.md)
+- [作品集演示指南](docs/release/DEMO_GUIDE.md)
+- [最小 V2 后端说明](docs/v2/MINIMAL_V2_BACKEND.md)
+- [V2 重构边界](docs/v2/V2_REFACTOR_BOUNDARY.md)
 
 ## License
 

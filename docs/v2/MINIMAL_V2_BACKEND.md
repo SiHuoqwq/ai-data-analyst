@@ -31,6 +31,17 @@ python -m pip install -r requirements.txt
 
 不要直接迁移用户当前的 `app.db`。验证时应使用临时数据库，或者先把 V1 数据库复制到仓库外，再对副本执行迁移。
 
+发布版可以使用：
+
+```powershell
+python -m app.migrate
+```
+
+该命令读取与应用相同的 `DATABASE_URL` 并显式执行 `upgrade head`。
+FastAPI 启动生命周期只检查 revision，不会自动迁移。数据库未到达当前
+head 时，`/health` 和 `/api/v2` 返回
+`503 DATABASE_MIGRATION_REQUIRED`。
+
 空临时数据库示例：
 
 ```powershell
@@ -44,7 +55,7 @@ python -m app.run
 
 `alembic.ini` 的缺省文件名是 `app_v2.db`，但开发和测试推荐始终显式设置 `ALEMBIC_DATABASE_URL`，防止误迁移其他数据库。
 
-迁移验证命令：
+仅用于新建、可丢弃临时数据库的往返迁移验证：
 
 ```powershell
 $env:ALEMBIC_DATABASE_URL = "sqlite:///D:/Codex/Temp/ai-data-analyst-migration-check.db"
@@ -61,6 +72,10 @@ python -m alembic upgrade head
 - `run_events`
 
 `downgrade base` 只删除上述 V2 表，保留 V1 的 `files`、`conversations`、`messages` 和 `charts`。
+
+`downgrade base` 不得用于真实 `app.db` 或真实数据库副本。真实数据库
+副本只允许执行 `upgrade head`、重复幂等升级、V1/V2 行数检查和
+`PRAGMA foreign_key_check`；真实原库只读取时间戳、大小和 SHA-256。
 
 ## Provider 配置
 

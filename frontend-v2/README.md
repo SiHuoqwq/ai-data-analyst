@@ -24,8 +24,13 @@ npm ci
 
 ```powershell
 $env:V2_PROVIDER = "fake"
+python -m app.migrate
 python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
+
+也可以直接运行仓库根目录的 `start.bat`。FastAPI 启动只检查数据库
+revision，不会自动执行迁移；缺少迁移时 `/health` 和 `/api/v2` 返回
+`503 DATABASE_MIGRATION_REQUIRED`。
 
 再启动前端：
 
