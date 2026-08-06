@@ -16,6 +16,25 @@ reinterpret the paid DeepSeek acceptance evidence below.
 - No new paid DeepSeek recommendation acceptance was performed. Any such
   acceptance requires separate, explicit authorization.
 
+### 2026-08-07 Fake resolution recheck
+
+The two Fake HTTP limitations recorded above were historical findings from the
+2026-08-06 check. They are resolved by `94779c5`, `ac0e3f6`, and `f4bc318`:
+
+- A fresh V1 upload of `demo/learning_operations_demo.csv` now returns both
+  `group_comparison` and `monthly_trend` template recommendations. Repeated GET
+  responses are stable and served from the same cached recommendation data.
+- Submitting each card question through HTTP completes the corresponding
+  controlled Fake workflow. The group chart summary reports
+  `orientation=horizontal`, uses the title `重点 Top 10`, and downloads as a
+  `1484 x 808` PNG with HTTP 200. The monthly result contains 90 table rows over
+  all 18 months from `2025-01` through `2026-06`; its chart downloads as a
+  `1485 x 805` PNG with HTTP 200.
+- REST re-reads restored both completed Runs, steps, and artifacts without data
+  changes. `/health` reported `provider.mode=fake` and a ready database.
+- This was still Fake-only validation. No new paid DeepSeek recommendation call
+  or acceptance was performed.
+
 # DeepSeek 受控演示验收报告
 
 验收日期：2026-08-06
