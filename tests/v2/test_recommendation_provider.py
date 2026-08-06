@@ -426,7 +426,7 @@ def test_deepseek_accepts_monthly_recommendation_with_integer_category_code(
     ]
 
 
-def test_deepseek_rejects_monthly_recommendation_with_unparseable_date_values(
+def test_deepseek_leaves_monthly_executability_validation_to_the_service(
     tmp_path,
 ):
     csv_path = tmp_path / "invalid-monthly-date.csv"
@@ -457,13 +457,12 @@ def test_deepseek_rejects_monthly_recommendation_with_unparseable_date_values(
         )
     )
 
-    with pytest.raises(ProviderError) as raised:
-        provider.recommend_questions(record)
+    result = provider.recommend_questions(record)
 
-    assert raised.value.code == "PROVIDER_INVALID_RESPONSE"
+    assert result.candidates[0].intent_type == "monthly_trend"
 
 
-def test_deepseek_rejects_monthly_recommendation_without_a_category_field():
+def test_deepseek_leaves_monthly_field_role_validation_to_the_service():
     provider = provider_with(
         lambda _request: response(
             json.dumps(
@@ -484,10 +483,12 @@ def test_deepseek_rejects_monthly_recommendation_without_a_category_field():
         )
     )
 
-    with pytest.raises(ProviderError) as raised:
-        provider.recommend_questions(file_record())
+    result = provider.recommend_questions(file_record())
 
-    assert raised.value.code == "PROVIDER_INVALID_RESPONSE"
+    assert result.candidates[0].referenced_fields == [
+        "completion_rate",
+        "enrollment_date",
+    ]
 
 
 @pytest.mark.parametrize(
@@ -519,7 +520,7 @@ def test_deepseek_rejects_recommendations_outside_the_strict_contract(candidate)
     assert raised.value.code == "PROVIDER_INVALID_RESPONSE"
 
 
-def test_deepseek_rejects_a_recommendation_that_references_missing_fields():
+def test_deepseek_leaves_referenced_field_validation_to_the_service():
     provider = provider_with(
         lambda _request: response(
             json.dumps(
@@ -540,10 +541,12 @@ def test_deepseek_rejects_a_recommendation_that_references_missing_fields():
         )
     )
 
-    with pytest.raises(ProviderError) as raised:
-        provider.recommend_questions(file_record())
+    result = provider.recommend_questions(file_record())
 
-    assert raised.value.code == "PROVIDER_INVALID_RESPONSE"
+    assert result.candidates[0].referenced_fields == [
+        "course_category",
+        "missing_field",
+    ]
 
 
 def test_deepseek_recommendation_request_contains_only_safe_field_metadata():
@@ -568,6 +571,47 @@ def test_deepseek_recommendation_request_contains_only_safe_field_metadata():
     assert "RAW_ROW_VALUE" not in request_text
     assert "SENSITIVE_SAMPLE_VALUE" not in request_text
     assert "API_KEY_MARKER" not in request_text
+
+
+def test_deepseek_profile_excludes_sensitive_and_path_like_field_names():
+    captured = {}
+    record = file_record()
+    record.filename = "..\\private\\leaked\r\nname.csv"
+    record.columns_info.extend(
+        [
+            {"name": "customer_segment", "dtype": "object"},
+            {"name": "api_key", "dtype": "object"},
+            {"name": "refresh_token", "dtype": "object"},
+            {"name": "user_password_hash", "dtype": "object"},
+            {"name": "C:\\private\\value", "dtype": "object"},
+            {"name": "../private/value", "dtype": "object"},
+        ]
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return response('{"candidates":[]}')
+
+    provider_with(handler).recommend_questions(record)
+
+    payload = json.loads(captured["body"]["messages"][1]["content"])
+    assert payload["dataset"]["filename"] == "leakedname.csv"
+    assert [field["name"] for field in payload["dataset"]["fields"]] == [
+        "course_category",
+        "enrollment_date",
+        "completion_rate",
+        "customer_segment",
+    ]
+    serialized = json.dumps(payload, ensure_ascii=False)
+    for forbidden in (
+        "api_key",
+        "refresh_token",
+        "user_password_hash",
+        "C:\\private\\value",
+        "../private/value",
+        "SENSITIVE_SAMPLE_VALUE",
+    ):
+        assert forbidden not in serialized
 
 
 def test_fake_provider_returns_deterministic_empty_recommendations_without_http(

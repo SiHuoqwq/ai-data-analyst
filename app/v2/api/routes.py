@@ -6,7 +6,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 
 from app.db.database import SessionLocal
 from app.db.models import MessageModel
-from app.v2.api.dependencies import get_provider
+from app.v2.api.dependencies import get_provider, get_recommendation_provider
 from app.v2.api.errors import V2APIError
 from app.v2.schemas.api import (
     APIMeta,
@@ -87,7 +87,7 @@ def create_conversation(body: CreateConversationRequest):
 )
 def get_dataset_recommendations(
     dataset_version_id: str,
-    provider=Depends(get_provider),
+    provider=Depends(get_recommendation_provider),
 ):
     try:
         result = recommendation_service.get_or_generate(dataset_version_id, provider)

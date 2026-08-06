@@ -21,7 +21,7 @@ def upgrade() -> None:
         sa.Column(
             "dataset_version_id",
             sa.String(),
-            sa.ForeignKey("files.id"),
+            sa.ForeignKey("files.id", ondelete="CASCADE"),
             nullable=False,
             unique=True,
         ),

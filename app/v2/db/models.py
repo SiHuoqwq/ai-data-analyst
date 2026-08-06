@@ -165,7 +165,7 @@ class DatasetRecommendationModel(V2Base):
     id = Column(String, primary_key=True)
     dataset_version_id = Column(
         String,
-        ForeignKey("files.id"),
+        ForeignKey("files.id", ondelete="CASCADE"),
         nullable=False,
         unique=True,
     )

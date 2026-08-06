@@ -1,7 +1,7 @@
-import re
 import uuid
 from dataclasses import dataclass
-from typing import Any, Callable
+from threading import Lock
+from typing import Any, Callable, Protocol
 
 from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
@@ -16,7 +16,16 @@ from app.v2.schemas.recommendations import (
 )
 from app.v2.schemas.intents import AnalysisIntent
 from app.v2.services.plan_compiler import PlanCompilationError
-from app.v2.services.provider import DeepSeekProvider
+from app.v2.services.recommendation_intents import validated_recommendation_intent
+from app.v2.services.recommendation_safety import (
+    contains_unsafe_recommendation_content,
+    is_public_field_name,
+    public_column_metadata,
+)
+
+
+_PROCESS_SINGLE_FLIGHT_GUARD = Lock()
+_PROCESS_DATASET_LOCKS: dict[str, Lock] = {}
 
 
 @dataclass(frozen=True)
@@ -35,6 +44,15 @@ class RecommendationServiceError(RuntimeError):
         self.status_code = status_code
 
 
+class RecommendationProvider(Protocol):
+    name: str
+    model: str
+
+    def recommend_questions(
+        self, file_record: FileModel
+    ) -> RecommendationGeneration: ...
+
+
 class DatasetRecommendationService:
     def __init__(
         self,
@@ -44,7 +62,32 @@ class DatasetRecommendationService:
         self.session_factory = session_factory
         self.registry = registry or LearningDomainRegistry()
 
-    def get_or_generate(self, dataset_version_id: str, provider) -> RecommendationResult:
+    def get_or_generate(
+        self,
+        dataset_version_id: str,
+        provider: RecommendationProvider,
+    ) -> RecommendationResult:
+        """Coalesce first misses for a dataset inside this service process.
+
+        Database uniqueness remains a conflict guard across processes; this
+        lock intentionally does not claim cross-process single-flight.
+        """
+        provider_name, provider_model = self._provider_identity(provider)
+        with self._dataset_lock(dataset_version_id):
+            return self._get_or_generate_locked(
+                dataset_version_id,
+                provider,
+                provider_name,
+                provider_model,
+            )
+
+    def _get_or_generate_locked(
+        self,
+        dataset_version_id: str,
+        provider: RecommendationProvider,
+        provider_name: str,
+        provider_model: str | None,
+    ) -> RecommendationResult:
         session = self.session_factory()
         try:
             cached = (
@@ -52,7 +95,9 @@ class DatasetRecommendationService:
                 .filter_by(dataset_version_id=dataset_version_id)
                 .first()
             )
-            if cached:
+            if cached and self._cache_matches(
+                cached, provider_name, provider_model
+            ):
                 return self._result_from_model(cached)
 
             file_record = session.get(FileModel, dataset_version_id)
@@ -63,7 +108,7 @@ class DatasetRecommendationService:
 
             accepted = (
                 []
-                if getattr(provider, "name", None) == "fake"
+                if provider_name == "fake"
                 else self._model_recommendations(file_record, provider)
             )
             source = "model" if accepted else "template"
@@ -71,17 +116,18 @@ class DatasetRecommendationService:
                 accepted = self._template_recommendations(file_record)
 
             now = utc_now()
-            row = DatasetRecommendationModel(
+            row = cached or DatasetRecommendationModel(
                 id=str(uuid.uuid4()),
                 dataset_version_id=dataset_version_id,
-                recommendations_json=accepted,
-                source=source,
-                provider_name=(getattr(provider, "name", None) if source == "model" else None),
-                provider_model=(getattr(provider, "model", None) if source == "model" else None),
-                created_at=now,
-                updated_at=now,
             )
-            session.add(row)
+            row.recommendations_json = accepted
+            row.source = source
+            row.provider_name = provider_name
+            row.provider_model = provider_model
+            row.created_at = now
+            row.updated_at = now
+            if cached is None:
+                session.add(row)
             try:
                 session.commit()
             except IntegrityError:
@@ -91,9 +137,15 @@ class DatasetRecommendationService:
                     .filter_by(dataset_version_id=dataset_version_id)
                     .first()
                 )
-                if winner:
+                if winner and self._cache_matches(
+                    winner, provider_name, provider_model
+                ):
                     return self._result_from_model(winner)
-                raise
+                raise RecommendationServiceError(
+                    "RECOMMENDATION_CACHE_CONFLICT",
+                    "Recommendation cache was updated by another provider.",
+                    503,
+                )
             session.refresh(row)
             return self._result_from_model(row)
         except Exception:
@@ -101,6 +153,37 @@ class DatasetRecommendationService:
             raise
         finally:
             session.close()
+
+    @staticmethod
+    def _dataset_lock(dataset_version_id: str) -> Lock:
+        with _PROCESS_SINGLE_FLIGHT_GUARD:
+            return _PROCESS_DATASET_LOCKS.setdefault(dataset_version_id, Lock())
+
+    @staticmethod
+    def _provider_identity(
+        provider: RecommendationProvider,
+    ) -> tuple[str, str | None]:
+        name = str(getattr(provider, "name", "") or "").strip()
+        model_value = getattr(provider, "model", None)
+        model = str(model_value).strip() if model_value is not None else None
+        if not name:
+            raise RecommendationServiceError(
+                "PROVIDER_IDENTITY_REQUIRED",
+                "Recommendation provider identity is required.",
+                503,
+            )
+        return name, model or None
+
+    @staticmethod
+    def _cache_matches(
+        row: DatasetRecommendationModel,
+        provider_name: str,
+        provider_model: str | None,
+    ) -> bool:
+        return (
+            row.provider_name == provider_name
+            and row.provider_model == provider_model
+        )
 
     def _model_recommendations(
         self, file_record: FileModel, provider
@@ -116,7 +199,7 @@ class DatasetRecommendationService:
             parsed = self._validated_candidate(candidate, file_record)
             if parsed is None or parsed.intent_type in accepted_intents:
                 continue
-            accepted.append(self._public_candidate(parsed, file_record))
+            accepted.append(self._public_candidate(parsed))
             accepted_intents.add(parsed.intent_type)
         return accepted
 
@@ -130,7 +213,7 @@ class DatasetRecommendationService:
                 item["intent_type"] == parsed.intent_type for item in accepted
             ):
                 continue
-            accepted.append(self._public_candidate(parsed, file_record))
+            accepted.append(self._public_candidate(parsed))
         return accepted
 
     def resolve_template_intent(
@@ -142,7 +225,7 @@ class DatasetRecommendationService:
             if candidate.intent_type != intent_type:
                 continue
             try:
-                return DeepSeekProvider._validated_recommendation_intent(
+                return validated_recommendation_intent(
                     candidate,
                     file_record,
                 )
@@ -155,53 +238,29 @@ class DatasetRecommendationService:
     ) -> RecommendationCandidate | None:
         try:
             parsed = RecommendationCandidate.model_validate(candidate)
-            if self._contains_physical_path(parsed, file_record):
+            available_fields = {
+                str(item.get("name"))
+                for item in public_column_metadata(file_record.columns_info or [])
+            }
+            if contains_unsafe_recommendation_content(parsed, file_record):
                 return None
             if any(
-                not self._is_public_field(field)
+                field not in available_fields or not is_public_field_name(field)
                 for field in parsed.referenced_fields
             ):
                 return None
-            DeepSeekProvider._validate_recommendation_candidates(
-                RecommendationGeneration(candidates=[parsed]), file_record
-            )
+            validated_recommendation_intent(parsed, file_record)
             return parsed
         except (PlanCompilationError, ValidationError, TypeError, ValueError):
             return None
-
-    @staticmethod
-    def _contains_physical_path(
-        candidate: RecommendationCandidate, file_record: FileModel
-    ) -> bool:
-        text = f"{candidate.label}\n{candidate.question}"
-        if file_record.filepath and file_record.filepath in text:
-            return True
-        return bool(
-            re.search(r"[A-Za-z]:[\\/]", text)
-            or re.search(r"(?<!\S)/(?:[^\s/]+/)+[^\s/]+", text)
-            or "\\\\" in text
-        )
-
-    @staticmethod
-    def _is_public_field(field: str) -> bool:
-        if any(character in field for character in ("/", "\\", ":")):
-            return False
-        return not bool(
-            re.search(
-                r"(?i)(?:^|[_\-\s])(?:api[_-]?key|api|access[_-]?token|token|"
-                r"secret|password|passwd|credential|authorization|auth|key)"
-                r"(?:$|[_\-\s])",
-                field,
-            )
-        )
 
     def _template_candidates(
         self, file_record: FileModel
     ) -> list[RecommendationCandidate]:
         field_types = {
             str(item.get("name")): str(item.get("dtype", "")).lower()
-            for item in (file_record.columns_info or [])
-            if item.get("name") and self._is_public_field(str(item["name"]))
+            for item in public_column_metadata(file_record.columns_info or [])
+            if item.get("name")
         }
         ordered_fields = self._registry_ordered_fields(field_types)
         metric_definitions = {
@@ -310,48 +369,12 @@ class DatasetRecommendationService:
     def _public_candidate(
         self,
         candidate: RecommendationCandidate,
-        file_record: FileModel,
     ) -> dict[str, Any]:
-        field_types = {
-            str(item.get("name")): str(item.get("dtype", "")).lower()
-            for item in (file_record.columns_info or [])
-        }
-
-        def is_metric(field: str) -> bool:
-            return any(
-                marker in field_types.get(field, "")
-                for marker in ("float", "decimal", "number", "bool")
-            )
-
-        def is_date(field: str) -> bool:
-            return "date" in field_types.get(field, "") or "time" in field_types.get(
-                field, ""
-            )
-
-        dimensions = [
-            field
-            for field in candidate.referenced_fields
-            if not is_metric(field) and not is_date(field)
-        ]
-        dimension = dimensions[0] if dimensions else None
-        if candidate.intent_type == "group_comparison" and dimension:
-            label = f"Compare by {self._field_label(dimension)}"
-            question = (
-                f"How do key outcomes compare across {self._field_label(dimension)}?"
-            )
-        elif candidate.intent_type == "monthly_trend" and dimension:
-            label = f"Monthly {self._field_label(dimension)} trend"
-            question = (
-                f"How does {self._field_label(dimension)} change by month?"
-            )
-        else:
-            label = "Monthly selected-field trend"
-            question = "How do the selected fields change by month?"
         return {
             "id": f"{candidate.intent_type}-1",
             "intent_type": candidate.intent_type,
-            "label": label,
-            "question": question,
+            "label": candidate.label,
+            "question": candidate.question,
             "referenced_fields": list(candidate.referenced_fields),
         }
 

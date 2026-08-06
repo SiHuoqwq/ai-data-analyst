@@ -2,7 +2,7 @@ from pathlib import Path
 
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import DateTime, create_engine, inspect, text
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -44,11 +44,30 @@ def test_upgrade_downgrade_upgrade_preserves_v1_and_creates_v2_tables(tmp_path):
         "created_at",
         "updated_at",
     } == set(recommendation_columns)
-    assert not recommendation_columns["created_at"]["nullable"]
-    assert not recommendation_columns["updated_at"]["nullable"]
+    assert inspect(engine).get_pk_constraint("dataset_recommendations")[
+        "constrained_columns"
+    ] == ["id"]
+    for required_column in (
+        "id",
+        "dataset_version_id",
+        "recommendations_json",
+        "source",
+        "created_at",
+        "updated_at",
+    ):
+        assert not recommendation_columns[required_column]["nullable"]
+    assert recommendation_columns["provider_name"]["nullable"]
+    assert recommendation_columns["provider_model"]["nullable"]
+    assert isinstance(recommendation_columns["created_at"]["type"], DateTime)
+    assert isinstance(recommendation_columns["updated_at"]["type"], DateTime)
+    recommendation_foreign_keys = inspect(engine).get_foreign_keys(
+        "dataset_recommendations"
+    )
     assert any(
         item["constrained_columns"] == ["dataset_version_id"]
-        for item in inspect(engine).get_foreign_keys("dataset_recommendations")
+        and item["referred_table"] == "files"
+        and item.get("options", {}).get("ondelete") == "CASCADE"
+        for item in recommendation_foreign_keys
     )
     assert any(
         item["column_names"] == ["dataset_version_id"]
