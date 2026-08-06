@@ -77,7 +77,11 @@ class UnderperformingInput(StrictAnalysisModel):
 
 class CreateChartInput(StrictAnalysisModel):
     source_step_id: str = Field(min_length=1, max_length=100)
+    priority_source_step_id: str | None = Field(
+        default=None, min_length=1, max_length=100
+    )
     chart_type: Literal["bar", "line"]
+    orientation: Literal["vertical", "horizontal"] = "vertical"
     x_field: str = Field(min_length=1, max_length=256)
     y_fields: list[str] = Field(min_length=1, max_length=4)
     color_field: str | None = Field(default=None, max_length=256)

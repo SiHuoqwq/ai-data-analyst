@@ -138,6 +138,8 @@ def test_monthly_planner_keeps_the_complete_supported_time_range():
     )
 
     assert specs[0].limit == 90
+    assert specs[0].orientation == "vertical"
+    assert specs[0].priority_source_step_id is None
 
 
 def test_group_planner_groups_percentages_but_separates_other_units():
@@ -160,7 +162,11 @@ def test_group_planner_groups_percentages_but_separates_other_units():
         grain=["dimension_1"],
     )
 
-    specs = ChartPlanner().plan("group_aggregate", _result(schema))
+    specs = ChartPlanner().plan(
+        "group_aggregate",
+        _result(schema, row_count=20),
+        priority_source_step_id="underperforming",
+    )
 
     assert len(specs) == 3
     by_unit = {item.unit: item for item in specs}
@@ -173,6 +179,42 @@ def test_group_planner_groups_percentages_but_separates_other_units():
     assert all(item.chart_type == "bar" for item in specs)
     assert all(item.x_field == "dimension_1" for item in specs)
     assert all(item.color_field is None for item in specs)
+    assert all(item.orientation == "horizontal" for item in specs)
+    assert all(item.limit == 10 for item in specs)
+    assert all(item.title == "重点 Top 10" for item in specs)
+    assert all(
+        item.priority_source_step_id == "underperforming" for item in specs
+    )
+
+
+def test_group_planner_keeps_all_rows_when_fewer_than_top_ten():
+    schema = ResultSchema(
+        dimensions=[
+            ResultDimension(
+                id="dimension_1",
+                label="课程类别",
+                role="category",
+                data_type="string",
+                source_field="课程类别",
+            ),
+            ResultDimension(
+                id="dimension_2",
+                label="课程难度",
+                role="category",
+                data_type="string",
+                source_field="课程难度",
+            ),
+        ],
+        metrics=[_metric("sample_count", "报名人数", "count")],
+        grain=["dimension_1", "dimension_2"],
+    )
+
+    specs = ChartPlanner().plan(
+        "group_aggregate", _result(schema, row_count=3)
+    )
+
+    assert specs[0].orientation == "horizontal"
+    assert specs[0].limit == 3
 
 
 def test_planner_rejects_missing_output_contract():

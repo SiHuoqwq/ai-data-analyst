@@ -875,7 +875,7 @@ class StructuredAnalysisTools:
                 "图表引用的分析步骤不存在或没有表格结果",
                 {"source_step_id": validated["source_step_id"]},
             )
-        df = source.dataframe.head(validated["limit"]).copy()
+        df = self._select_chart_rows(source, prior_results, validated)
         required = [validated["x_field"], *validated["y_fields"]]
         if validated["color_field"]:
             required.append(validated["color_field"])
@@ -927,27 +927,49 @@ class StructuredAnalysisTools:
 
         drafts = []
         for unit, y_fields in unit_groups.items():
-            fig, ax = plt.subplots(figsize=(10, 5.5))
+            figure_height = (
+                max(5.5, 1.5 + len(df) * 0.65)
+                if validated["orientation"] == "horizontal"
+                else 5.5
+            )
+            fig, ax = plt.subplots(figsize=(10, figure_height))
             if validated["chart_type"] == "bar":
                 x = range(len(df))
                 width = 0.8 / len(y_fields)
                 for index, y_field in enumerate(y_fields):
                     values = pd.to_numeric(df[y_field], errors="coerce")
-                    ax.bar(
-                        [item + index * width for item in x],
-                        values,
-                        width=width,
-                        label=field_labels.get(y_field, y_field),
+                    positions = [item + index * width for item in x]
+                    if validated["orientation"] == "horizontal":
+                        ax.barh(
+                            positions,
+                            values,
+                            height=width,
+                            label=field_labels.get(y_field, y_field),
+                        )
+                    else:
+                        ax.bar(
+                            positions,
+                            values,
+                            width=width,
+                            label=field_labels.get(y_field, y_field),
+                        )
+                tick_positions = [
+                    item + width * (len(y_fields) - 1) / 2
+                    for item in x
+                ]
+                if validated["orientation"] == "horizontal":
+                    ax.set_yticks(
+                        tick_positions,
+                        [_wrapped_label(value, width=30) for value in full_labels],
                     )
-                ax.set_xticks(
-                    [
-                        item + width * (len(y_fields) - 1) / 2
-                        for item in x
-                    ],
-                    [_wrapped_label(value) for value in full_labels],
-                    rotation=35,
-                    ha="right",
-                )
+                    ax.invert_yaxis()
+                else:
+                    ax.set_xticks(
+                        tick_positions,
+                        [_wrapped_label(value) for value in full_labels],
+                        rotation=35,
+                        ha="right",
+                    )
             elif color_field:
                 for category, subset in df.groupby(color_field, dropna=False):
                     for y_field in y_fields:
@@ -977,12 +999,13 @@ class StructuredAnalysisTools:
                 title = f"{title}，展示前 {validated['limit']} 项"
             ax.set_title(title)
             axis_fields = label_fields or [x_field]
-            ax.set_xlabel(
-                " / ".join(
-                    field_labels.get(field, field)
-                    for field in axis_fields
-                )
+            axis_label = " / ".join(
+                field_labels.get(field, field) for field in axis_fields
             )
+            if validated["orientation"] == "horizontal":
+                ax.set_ylabel(axis_label)
+            else:
+                ax.set_xlabel(axis_label)
             ax.legend()
             fig.tight_layout()
             chart_root = Path(settings.chart_dir)
@@ -1025,3 +1048,58 @@ class StructuredAnalysisTools:
         return ToolExecutionResult(
             "success", summary, [], len(df), False, [], drafts, validated
         )
+
+    @staticmethod
+    def _select_chart_rows(
+        source: ToolExecutionResult,
+        prior_results: dict[str, ToolExecutionResult],
+        validated: dict[str, Any],
+    ) -> pd.DataFrame:
+        source_frame = source.dataframe
+        assert source_frame is not None
+        priority_id = validated.get("priority_source_step_id")
+        priority = prior_results.get(priority_id) if priority_id else None
+        source_schema = (
+            source.output_contract.result_schema
+            if source.output_contract is not None
+            else None
+        )
+        priority_frame = priority.dataframe if priority is not None else None
+        dimensions = (
+            [
+                item.id
+                for item in source_schema.dimensions
+                if item.id in source_frame.columns
+                and priority_frame is not None
+                and item.id in priority_frame.columns
+            ]
+            if source_schema is not None
+            else []
+        )
+        if priority_frame is None or not dimensions:
+            return source_frame.head(validated["limit"]).copy()
+
+        priority_keys = priority_frame[dimensions].drop_duplicates()
+        matched = priority_keys.merge(
+            source_frame,
+            on=dimensions,
+            how="left",
+            sort=False,
+            indicator=True,
+        )
+        matched = matched.loc[matched["_merge"] == "both"].drop(
+            columns="_merge"
+        )
+        remaining = source_frame.merge(
+            priority_keys,
+            on=dimensions,
+            how="left",
+            sort=False,
+            indicator=True,
+        )
+        remaining = remaining.loc[remaining["_merge"] == "left_only"].drop(
+            columns="_merge"
+        )
+        return pd.concat([matched, remaining], ignore_index=True).head(
+            validated["limit"]
+        ).copy()

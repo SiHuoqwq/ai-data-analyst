@@ -22,6 +22,60 @@ from app.v2.services.provider import (
 from app.v2.services.runs import AnalysisRunService
 
 
+def test_chart_planning_attaches_underperforming_priority_only_to_group_results():
+    class CapturingChartPlanner:
+        def __init__(self):
+            self.priority_sources = []
+
+        def plan(self, source_id, _source, priority_source_step_id=None):
+            self.priority_sources.append((source_id, priority_source_step_id))
+            return []
+
+    planner = CapturingChartPlanner()
+    executor = AnalysisExecutor(object(), chart_planner=planner)
+    group_source = type(
+        "Source",
+        (),
+        {
+            "output_contract": type(
+                "Contract", (), {"source_tool": "group_aggregate"}
+            )()
+        },
+    )()
+    underperforming_source = type(
+        "Source",
+        (),
+        {
+            "output_contract": type(
+                "Contract", (), {"source_tool": "identify_underperforming"}
+            )()
+        },
+    )()
+
+    executor._execute_compiled_step(
+        type(
+            "Step",
+            (),
+            {
+                "operation": "chart_planning",
+                "arguments": {
+                    "source_step_ids": ["aggregate", "underperforming"]
+                },
+            },
+        )(),
+        None,
+        {
+            "aggregate": group_source,
+            "underperforming": underperforming_source,
+        },
+    )
+
+    assert planner.priority_sources == [
+        ("aggregate", "underperforming"),
+        ("underperforming", None),
+    ]
+
+
 class ScriptedRealProvider:
     name = "deepseek"
     model = "mock-deepseek"

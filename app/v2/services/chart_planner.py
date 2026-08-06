@@ -21,7 +21,9 @@ class ChartPlanningError(RuntimeError):
 @dataclass(frozen=True)
 class ChartSpec:
     source_step_id: str
+    priority_source_step_id: str | None
     chart_type: Literal["bar", "line"]
+    orientation: Literal["vertical", "horizontal"]
     x_field: str
     y_fields: list[str]
     color_field: str | None
@@ -32,7 +34,9 @@ class ChartSpec:
     def arguments(self) -> dict:
         return {
             "source_step_id": self.source_step_id,
+            "priority_source_step_id": self.priority_source_step_id,
             "chart_type": self.chart_type,
+            "orientation": self.orientation,
             "x_field": self.x_field,
             "y_fields": self.y_fields,
             "color_field": self.color_field,
@@ -46,6 +50,7 @@ class ChartPlanner:
         self,
         source_step_id: str,
         result: ToolExecutionResult,
+        priority_source_step_id: str | None = None,
     ) -> list[ChartSpec]:
         contract = result.output_contract
         if contract is None:
@@ -99,18 +104,27 @@ class ChartPlanner:
             if time_dimension is not None and series_dimension is not None
             else None
         )
+        is_time_series = time_dimension is not None
         return [
             ChartSpec(
                 source_step_id=source_step_id,
+                priority_source_step_id=(
+                    None if is_time_series else priority_source_step_id
+                ),
                 chart_type=chart_type,
+                orientation="vertical" if is_time_series else "horizontal",
                 x_field=x_dimension.id,
                 y_fields=[item.id for item in metrics],
                 color_field=color_field,
-                title=self._title(schema, metrics),
+                title=(
+                    self._title(schema, metrics)
+                    if is_time_series
+                    else "重点 Top 10"
+                ),
                 limit=(
                     min(result.row_count, 100)
-                    if time_dimension is not None
-                    else 50
+                    if is_time_series
+                    else min(result.row_count, 10)
                 ),
                 unit=unit,
             )

@@ -788,7 +788,21 @@ class AnalysisExecutor:
                         "图表规划引用的分析结果不存在",
                         {"source_step_id": source_id},
                     )
-                specs = self.chart_planner.plan(source_id, source)
+                priority_source_step_id = (
+                    "underperforming"
+                    if (
+                        source.output_contract is not None
+                        and source.output_contract.source_tool
+                        == "group_aggregate"
+                        and "underperforming" in prior_results
+                    )
+                    else None
+                )
+                specs = self.chart_planner.plan(
+                    source_id,
+                    source,
+                    priority_source_step_id=priority_source_step_id,
+                )
                 for spec in specs:
                     chart_result = self.structured_tools.execute(
                         "create_chart",
@@ -804,6 +818,7 @@ class AnalysisExecutor:
                             "x_field": spec.x_field,
                             "y_fields": spec.y_fields,
                             "chart_type": spec.chart_type,
+                            "orientation": spec.orientation,
                         }
                     )
             return ToolExecutionResult(

@@ -8,9 +8,16 @@ from app.v2.schemas.analysis import (
     GroupAggregateInput,
     MonthlyTrendInput,
 )
+from app.v2.schemas.results import (
+    ResultDimension,
+    ResultMetric,
+    ResultSchema,
+    ToolOutputContract,
+)
 from app.v2.services.analytics import (
     StructuredAnalysisTools,
     ToolExecutionError,
+    ToolExecutionResult,
 )
 
 
@@ -537,6 +544,108 @@ def test_chart_splits_mixed_units_and_keeps_multidimensional_labels(
     }
     assert all(Path(item.chart_filepath).is_file() for item in result.drafts)
     assert all(" / " in item.alt_text for item in result.drafts)
+
+
+def test_horizontal_chart_prioritizes_underperforming_groups_without_mutating_source(
+    course_file, tmp_path, monkeypatch
+):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "chart_dir", str(tmp_path / "charts"))
+    schema = ResultSchema(
+        dimensions=[
+            ResultDimension(
+                id=f"dimension_{index}",
+                label=label,
+                role="category",
+                data_type="string",
+                source_field=label,
+            )
+            for index, label in enumerate(
+                ["课程类别", "课程难度", "购买渠道", "主要学习设备"], start=1
+            )
+        ],
+        metrics=[
+            ResultMetric(
+                id="enrollment_count",
+                label="报名人数",
+                unit="count",
+                aggregation="count",
+                nullable=False,
+            ),
+            ResultMetric(
+                id="completion_rate_mean",
+                label="平均完成率",
+                unit="percentage",
+                aggregation="mean",
+                nullable=True,
+            ),
+        ],
+        grain=["dimension_1", "dimension_2", "dimension_3", "dimension_4"],
+    )
+    rows = [
+        {
+            "dimension_1": f"类别 {index}",
+            "dimension_2": f"难度 {index}",
+            "dimension_3": f"渠道 {index}",
+            "dimension_4": f"设备 {index}",
+            "enrollment_count": 12 - index,
+            "completion_rate_mean": 0.5,
+        }
+        for index in range(12)
+    ]
+    source_frame = pd.DataFrame(rows)
+    source_before = source_frame.copy(deep=True)
+    source = ToolExecutionResult(
+        "success", {}, rows, len(rows), False, [], [], {}, source_frame,
+        ToolOutputContract(
+            schema=schema,
+            rows=rows,
+            full_row_count=len(rows),
+            preview_row_count=len(rows),
+            source_tool="group_aggregate",
+            source_step_id="aggregate",
+        ),
+    )
+    priority_rows = [rows[11], rows[7]]
+    priority = ToolExecutionResult(
+        "success", {}, priority_rows, len(priority_rows), False, [], [], {},
+        pd.DataFrame(priority_rows),
+        ToolOutputContract(
+            schema=schema,
+            rows=priority_rows,
+            full_row_count=len(priority_rows),
+            preview_row_count=len(priority_rows),
+            source_tool="identify_underperforming",
+            source_step_id="underperforming",
+        ),
+    )
+
+    result = StructuredAnalysisTools().execute(
+        "create_chart",
+        {
+            "source_step_id": "aggregate",
+            "priority_source_step_id": "underperforming",
+            "chart_type": "bar",
+            "orientation": "horizontal",
+            "x_field": "dimension_1",
+            "y_fields": ["enrollment_count", "completion_rate_mean"],
+            "color_field": None,
+            "title": "重点 Top 10",
+            "limit": 10,
+        },
+        course_file,
+        {"aggregate": source, "underperforming": priority},
+    )
+
+    assert result.summary["plotted_rows"] == 10
+    assert len(result.drafts) == 2
+    assert source.dataframe.equals(source_before)
+    for chart in result.drafts:
+        assert Path(chart.chart_filepath).is_file()
+        assert chart.alt_text.index(
+            "类别 11 / 难度 11 / 渠道 11 / 设备 11"
+        ) < chart.alt_text.index("类别 0 / 难度 0 / 渠道 0 / 设备 0")
 
 
 def test_chart_alt_text_is_bounded_for_many_multidimensional_groups(
