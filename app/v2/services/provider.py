@@ -740,13 +740,14 @@ class DeepSeekProvider:
                 )
             )
             self._raise_if_cancelled()
-            repaired = self._repair_conclusion_response(
-                content, initial_error, aliases
+            repaired, repair_aliases = self._repair_conclusion_response(
+                content, initial_error, registry
             )
+            self.last_conclusion_aliases = repair_aliases
             try:
                 conclusion = self._validate_conclusion_response(
                     repaired,
-                    aliases,
+                    repair_aliases,
                 )
                 self.last_conclusion_mode = "repaired_model"
                 return conclusion
@@ -800,8 +801,8 @@ class DeepSeekProvider:
             | ValidationError
             | ConclusionEvidenceError
         ),
-        aliases: EvidenceAliasMap,
-    ) -> str:
+        registry: EvidenceRegistry,
+    ) -> tuple[str, EvidenceAliasMap]:
         issues = (
             self._validation_issues(error)
             if isinstance(error, (StructuredResponseError, ValidationError))
@@ -817,8 +818,9 @@ class DeepSeekProvider:
                 "只能引用给定 evidence alias",
             ],
         }
-        payload["evidence_registry"] = aliases.prompt_payload()
-        return self._chat(
+        repair_aliases = self._bounded_alias_map(payload, registry)
+        payload["evidence_registry"] = repair_aliases.prompt_payload()
+        repaired = self._chat(
             [
                 {
                     "role": "system",
@@ -831,6 +833,7 @@ class DeepSeekProvider:
             ],
             temperature=0,
         )
+        return repaired, repair_aliases
 
     def close(self) -> None:
         if self._owns_client and self._client is not None:

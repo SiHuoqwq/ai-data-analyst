@@ -107,7 +107,11 @@ class ChartPlanner:
                 y_fields=[item.id for item in metrics],
                 color_field=color_field,
                 title=self._title(schema, metrics),
-                limit=50,
+                limit=(
+                    min(result.row_count, 100)
+                    if time_dimension is not None
+                    else 50
+                ),
                 unit=unit,
             )
             for unit, metrics in metrics_by_unit.items()

@@ -585,6 +585,30 @@ class StructuredAnalysisTools:
             ["月份", validated["category_field"]],
             validated["metrics"],
         ).sort_values(["月份", validated["category_field"]])
+        periods = pd.period_range(
+            filtered["月份"].min(),
+            filtered["月份"].max(),
+            freq="M",
+        ).astype(str)
+        categories = filtered[validated["category_field"]].drop_duplicates()
+        complete_index = pd.MultiIndex.from_product(
+            [periods, categories],
+            names=["月份", validated["category_field"]],
+        )
+        full_result = (
+            full_result.set_index(["月份", validated["category_field"]])
+            .reindex(complete_index)
+            .reset_index()
+        )
+        for metric in validated["metrics"]:
+            if metric["aggregation"] in {"count", "sum"}:
+                full_result[metric["alias"]] = full_result[
+                    metric["alias"]
+                ].fillna(0)
+            if metric["aggregation"] == "count":
+                full_result[metric["alias"]] = full_result[
+                    metric["alias"]
+                ].astype(int)
         full_result = _apply_result_schema(
             full_result.reset_index(drop=True),
             output_schema,
@@ -623,16 +647,24 @@ class StructuredAnalysisTools:
                 change_rate = (
                     (last - first) / abs(first) if first else 0.0
                 )
-                period_changes = (
-                    values.pct_change()
-                    .replace([float("inf"), float("-inf")], pd.NA)
-                    .dropna()
-                )
-                volatility = (
-                    float(period_changes.std(ddof=0))
-                    if len(period_changes)
-                    else 0.0
-                )
+                if metric["aggregation"] == "count":
+                    level_mean = abs(float(values.mean()))
+                    volatility = (
+                        float(values.std(ddof=0)) / level_mean
+                        if level_mean
+                        else 0.0
+                    )
+                else:
+                    period_changes = (
+                        values.pct_change()
+                        .replace([float("inf"), float("-inf")], pd.NA)
+                        .dropna()
+                    )
+                    volatility = (
+                        float(period_changes.std(ddof=0))
+                        if len(period_changes)
+                        else 0.0
+                    )
                 trend_rows.append(
                     {
                         "category": str(category),

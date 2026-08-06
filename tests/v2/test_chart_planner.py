@@ -11,13 +11,13 @@ from app.v2.services.analytics import ToolExecutionResult
 from app.v2.services.chart_planner import ChartPlanningError, ChartPlanner
 
 
-def _result(schema: ResultSchema) -> ToolExecutionResult:
+def _result(schema: ResultSchema, row_count: int = 2) -> ToolExecutionResult:
     rows = [
         {
             dimension.id: "2026-01" if dimension.role == "time" else "AI 应用"
             for dimension in schema.dimensions
         }
-        for _ in range(2)
+        for _ in range(row_count)
     ]
     for row in rows:
         for metric in schema.metrics:
@@ -107,6 +107,37 @@ def test_monthly_planner_uses_period_and_creates_three_unit_safe_charts():
         ("paid_amount_sum",),
         ("completion_rate_mean",),
     }
+
+
+def test_monthly_planner_keeps_the_complete_supported_time_range():
+    schema = ResultSchema(
+        dimensions=[
+            ResultDimension(
+                id="period",
+                label="月份",
+                role="time",
+                data_type="date",
+                source_field="报名日期",
+            ),
+            ResultDimension(
+                id="series",
+                label="课程类别",
+                role="series",
+                data_type="string",
+                source_field="课程类别",
+            ),
+        ],
+        metrics=[_metric("enrollment_count", "报名人数", "count")],
+        grain=["period", "series"],
+        time_granularity="month",
+    )
+
+    specs = ChartPlanner().plan(
+        "monthly_aggregate",
+        _result(schema, row_count=90),
+    )
+
+    assert specs[0].limit == 90
 
 
 def test_group_planner_groups_percentages_but_separates_other_units():

@@ -350,6 +350,59 @@ def test_monthly_trend_signals_use_full_result_before_preview_limit(course_file)
     }
 
 
+def test_monthly_trend_fills_missing_month_category_combinations(tmp_path):
+    source = tmp_path / "monthly-gaps.xlsx"
+    pd.DataFrame(
+        [
+            {"报名日期": "2026-01-05", "课程类别": "A", "实付金额": 10, "完成率": 0.8},
+            {"报名日期": "2026-01-06", "课程类别": "B", "实付金额": 20, "完成率": 0.6},
+            {"报名日期": "2026-02-05", "课程类别": "A", "实付金额": 11, "完成率": 0.7},
+            {"报名日期": "2026-03-05", "课程类别": "A", "实付金额": 12, "完成率": 0.9},
+            {"报名日期": "2026-03-06", "课程类别": "B", "实付金额": 22, "完成率": 0.5},
+        ]
+    ).to_excel(source, index=False)
+    record = FileModel(
+        id="monthly-gaps",
+        filename=source.name,
+        filepath=str(source),
+        file_type="xlsx",
+        row_count=5,
+        col_count=4,
+        columns_info=[],
+        profile_report="",
+    )
+
+    result = StructuredAnalysisTools().execute(
+        "monthly_trend",
+        {
+            "date_field": "报名日期",
+            "category_field": "课程类别",
+            "metrics": [
+                {"field": None, "aggregation": "count", "alias": "报名人数"},
+                {"field": "实付金额", "aggregation": "sum", "alias": "实付金额"},
+                {"field": "完成率", "aggregation": "mean", "alias": "平均完成率"},
+            ],
+            "filters": [],
+            "limit": 100,
+        },
+        record,
+        {},
+    )
+
+    assert len(result.dataframe) == 6
+    missing = result.dataframe[
+        (result.dataframe["月份"] == "2026-02")
+        & (result.dataframe["课程类别"] == "B")
+    ].iloc[0]
+    assert missing["报名人数"] == 0
+    assert missing["实付金额"] == 0
+    assert pd.isna(missing["平均完成率"])
+    assert result.summary["trend_signals"]["most_volatile"] == {
+        "category": "B",
+        "change_rate_stddev": 0.707107,
+    }
+
+
 def test_underperforming_combinations_records_deterministic_rule(course_file):
     result = StructuredAnalysisTools().execute(
         "identify_underperforming",

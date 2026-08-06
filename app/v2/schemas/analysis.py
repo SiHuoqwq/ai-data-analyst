@@ -82,7 +82,7 @@ class CreateChartInput(StrictAnalysisModel):
     y_fields: list[str] = Field(min_length=1, max_length=4)
     color_field: str | None = Field(default=None, max_length=256)
     title: str = Field(min_length=1, max_length=200)
-    limit: int = Field(default=20, ge=1, le=50)
+    limit: int = Field(default=20, ge=1, le=100)
 
 
 TOOL_INPUT_MODELS = {

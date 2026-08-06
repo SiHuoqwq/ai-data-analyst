@@ -125,7 +125,7 @@ class PlanValidator:
                 marker in dtype
                 for marker in ("int", "float", "decimal", "number", "bool")
             )
-            if metric.aggregation in {"sum", "mean", "rate"} and not numeric:
+            if metric.aggregation in {"sum", "mean"} and not numeric:
                 raise PlanCompilationError(
                     "INVALID_FIELD_TYPE",
                     "指标字段类型不支持所选聚合",

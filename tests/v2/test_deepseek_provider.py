@@ -240,6 +240,62 @@ def test_deepseek_bounds_large_conclusion_registry_across_sources():
     assert conclusion.findings[0].evidence_refs[0] in included_aliases
 
 
+def test_deepseek_rebounds_large_evidence_registry_for_conclusion_repair():
+    registry = EvidenceRegistry.from_tool_evidence(
+        "run-large-repair",
+        [
+            {
+                "artifact_id": f"artifact-{artifact_index}",
+                "artifact_type": "table",
+                "source_tool": "group_aggregate",
+                "title": f"汇总表 {artifact_index}",
+                "summary": {},
+                "preview": [
+                    {
+                        "课程类别": (
+                            f"课程类别{artifact_index}-{row_index}-"
+                            "用于验证较长多维证据标签"
+                        ),
+                        "购买渠道": "短视频内容营销推广渠道",
+                        "报名人数": 100 + row_index,
+                        "平均完成率": 0.3 + row_index / 100,
+                    }
+                    for row_index in range(20)
+                ],
+            }
+            for artifact_index in range(4)
+        ],
+    )
+    requests = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        requests.append(body)
+        if len(requests) == 1:
+            return response("x" * 2_000)
+        payload = json.loads(body["messages"][1]["content"])
+        return response(
+            valid_conclusion(payload["evidence_registry"][0]["alias"])
+        )
+
+    provider = provider_with(handler, max_prompt_chars=8_000)
+
+    conclusion = provider.build_conclusion(
+        "分析多个来源的课程表现",
+        file_record(),
+        registry,
+    )
+
+    assert len(requests) == 2
+    assert all(
+        len(request["messages"][1]["content"]) <= 8_000
+        for request in requests
+    )
+    assert conclusion.findings[0].evidence_refs[0] in {
+        entry.alias for entry in provider.last_conclusion_aliases.entries
+    }
+
+
 def test_deepseek_records_sanitized_conclusion_validation_diagnostics():
     registry = conclusion_registry()
     requests = []

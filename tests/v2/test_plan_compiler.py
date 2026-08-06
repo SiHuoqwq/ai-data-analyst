@@ -138,6 +138,27 @@ def test_group_compiler_generates_aggregate_underperforming_and_charts():
     }
 
 
+def test_group_compiler_accepts_categorical_refund_values_for_rate():
+    record = dataset_record()
+    record.columns_info = [
+        {
+            **column,
+            "dtype": "object" if column["name"] == "是否退款" else column["dtype"],
+        }
+        for column in record.columns_info
+    ]
+
+    plan = PlanCompiler().compile(group_intent(), record)
+
+    refund_metric = next(
+        metric
+        for metric in plan.intent.metrics
+        if metric.semantic == "退款率"
+    )
+    assert refund_metric.source_field == "是否退款"
+    assert refund_metric.aggregation == "rate"
+
+
 def test_monthly_schema_uses_stable_ids_and_units():
     plan = PlanCompiler().compile(monthly_intent(), dataset_record())
     schema = plan.step("monthly_aggregate").output_schema
