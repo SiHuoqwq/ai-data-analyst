@@ -8,6 +8,7 @@ import {
   listAnalysisRunSteps,
 } from './v2-runs'
 import { getArtifact, listAnalysisRunArtifacts } from './v2-artifacts'
+import { getDatasetRecommendations } from './v2-recommendations'
 
 const jsonResponse = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
@@ -78,6 +79,34 @@ describe('V2 API client', () => {
         method: 'POST',
         headers: expect.objectContaining({ 'Idempotency-Key': 'submit-key-1' }),
       }),
+    )
+  })
+
+  it('gets typed recommendations for the requested dataset', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({
+      data: {
+        dataset_version_id: 'file-1',
+        source: 'template',
+        generated_at: '2026-08-06T10:00:00Z',
+        recommendations: [{
+          id: 'recommendation-1',
+          intent_type: 'group_comparison',
+          label: '课程组合比较',
+          question: '比较课程类别与完成率。',
+          referenced_fields: ['课程类别', '完成率'],
+        }],
+      },
+      meta: metaFixture,
+    }))
+
+    await expect(getDatasetRecommendations('file / 1')).resolves.toMatchObject({
+      dataset_version_id: 'file-1',
+      source: 'template',
+      recommendations: [{ id: 'recommendation-1', intent_type: 'group_comparison' }],
+    })
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v2/datasets/file%20%2F%201/recommendations',
+      expect.any(Object),
     )
   })
 

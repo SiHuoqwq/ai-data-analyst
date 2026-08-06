@@ -18,6 +18,21 @@ const nullableString = (value: unknown): value is string | null => value === nul
 const number = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value)
 const stringArray = (value: unknown): value is string[] => Array.isArray(value) && value.every(string)
 
+export type DatasetRecommendation = {
+  id: string
+  intent_type: 'group_comparison' | 'monthly_trend'
+  label: string
+  question: string
+  referenced_fields: string[]
+}
+
+export type DatasetRecommendationResponse = {
+  dataset_version_id: string
+  recommendations: DatasetRecommendation[]
+  source: 'model' | 'template'
+  generated_at: string
+}
+
 const unwrap = (value: unknown): Record<string, unknown> => {
   if (!object(value) || !object(value.data)) throw invalidResponseError()
   return value.data
@@ -95,6 +110,22 @@ export const parseArtifact = (value: unknown): AnalysisArtifact => {
   const data = unwrap(value)
   if (!validArtifact(data)) throw invalidResponseError()
   return data as unknown as AnalysisArtifact
+}
+
+const validRecommendation = (value: unknown): value is DatasetRecommendation =>
+  object(value)
+  && [value.id, value.label, value.question].every(string)
+  && (value.intent_type === 'group_comparison' || value.intent_type === 'monthly_trend')
+  && stringArray(value.referenced_fields)
+
+export const parseDatasetRecommendations = (value: unknown): DatasetRecommendationResponse => {
+  const data = unwrap(value)
+  if (!string(data.dataset_version_id) || !Array.isArray(data.recommendations)
+    || data.recommendations.length > 2 || !data.recommendations.every(validRecommendation)
+    || (data.source !== 'model' && data.source !== 'template') || !string(data.generated_at)) {
+    throw invalidResponseError()
+  }
+  return data as unknown as DatasetRecommendationResponse
 }
 
 const eventTypes = new Set<V2EventType>([

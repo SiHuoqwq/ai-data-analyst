@@ -20,7 +20,7 @@ import { MarkdownContent } from '../../components/feedback/MarkdownContent'
 import { Button } from '../../components/ui/Button'
 import { useDataset } from '../../features/datasets/queries'
 import { ArtifactView } from '../../features/analysis/ArtifactView'
-import { ANALYSIS_EXAMPLE_QUESTIONS } from '../../features/analysis/example-questions'
+import { useDatasetRecommendations } from '../../features/analysis/recommendation-queries'
 import {
   useAnalysisRun,
   useAnalysisRunArtifacts,
@@ -150,6 +150,7 @@ export function AnalysisWorkbenchPage() {
   const conversationId = searchParams.get('conversationId') || ''
   const runId = searchParams.get('runId') || ''
   const dataset = useDataset(fileId)
+  const recommendations = useDatasetRecommendations(fileId)
   const conversation = useConversationDetail(conversationId)
   const run = useAnalysisRun(runId)
   const steps = useAnalysisRunSteps(runId)
@@ -348,21 +349,28 @@ export function AnalysisWorkbenchPage() {
       {!runId && <section className="analysis-welcome">
         <div><span>01</span><ChevronRight /></div>
         <h2>从一个明确的问题开始</h2>
-        <p>当前支持课程组合比较和课程月度趋势。选择示例只会填入输入框，由你确认后再开始分析。</p>
-        <div className="example-questions" aria-label="支持的分析示例">
-          {ANALYSIS_EXAMPLE_QUESTIONS.map((example) => <button
-            type="button"
-            key={example.id}
-            aria-label={`使用${example.label}示例`}
-            onClick={() => {
-              setQuestion(example.question)
-              setPendingSubmission(null)
-            }}
-          >
-            <strong>{example.label}</strong>
-            <span>{example.question}</span>
-          </button>)}
-        </div>
+        <p>选择推荐问题只会填入输入框，由你确认后再开始分析。</p>
+        {recommendations.isPending && <p aria-live="polite">正在准备推荐问题</p>}
+        {recommendations.isError && <p role="status">推荐问题暂时不可用</p>}
+        {recommendations.data && <>
+          <span className="eyebrow">
+            {recommendations.data.source === 'model' ? 'AI 推荐' : '字段模板'}
+          </span>
+          <div className="example-questions" aria-label="数据集推荐问题">
+            {recommendations.data.recommendations.map((recommendation) => <button
+              type="button"
+              key={recommendation.id}
+              aria-label={`使用${recommendation.label}推荐`}
+              onClick={() => {
+                setQuestion(recommendation.question)
+                setPendingSubmission(null)
+              }}
+            >
+              <strong>{recommendation.label}</strong>
+              <span>{recommendation.question}</span>
+            </button>)}
+          </div>
+        </>}
       </section>}
 
       {runId && <section className="active-analysis" aria-labelledby="current-analysis-heading">

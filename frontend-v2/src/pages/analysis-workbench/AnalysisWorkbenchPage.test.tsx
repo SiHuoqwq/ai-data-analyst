@@ -13,6 +13,20 @@ let conversationData: Record<string, unknown> | undefined
 let runData: Record<string, unknown> | undefined
 let stepsData: Record<string, unknown>[] = []
 let artifactsData: Record<string, unknown>[] = []
+let recommendationsPending = false
+let recommendationsError: unknown = null
+let recommendationsByDataset: Record<string, {
+  dataset_version_id: string
+  recommendations: Array<{
+    id: string
+    intent_type: 'group_comparison' | 'monthly_trend'
+    label: string
+    question: string
+    referenced_fields: string[]
+  }>
+  source: 'model' | 'template'
+  generated_at: string
+}> = {}
 
 vi.mock('../../features/datasets/queries', () => ({
   useDataset: () => ({
@@ -78,6 +92,16 @@ vi.mock('../../features/analysis/queries', () => ({
   }),
 }))
 
+vi.mock('../../features/analysis/recommendation-queries', () => ({
+  useDatasetRecommendations: (datasetId: string) => ({
+    isPending: recommendationsPending,
+    isError: Boolean(recommendationsError),
+    error: recommendationsError,
+    data: recommendationsByDataset[datasetId],
+    refetch: vi.fn(),
+  }),
+}))
+
 vi.mock('../../api/v2-events', () => ({
   subscribeRunEvents: (...args: unknown[]) => subscribe(...args),
 }))
@@ -132,6 +156,31 @@ describe('AnalysisWorkbenchPage', () => {
     runData = undefined
     stepsData = []
     artifactsData = []
+    recommendationsPending = false
+    recommendationsError = null
+    recommendationsByDataset = {
+      'file-1': {
+        dataset_version_id: 'file-1',
+        source: 'model',
+        generated_at: '2026-08-06T10:00:00Z',
+        recommendations: [
+          {
+            id: 'recommendation-1',
+            intent_type: 'group_comparison',
+            label: '课程组合比较',
+            question: '比较课程类别与完成率。',
+            referenced_fields: ['课程类别', '完成率'],
+          },
+          {
+            id: 'recommendation-2',
+            intent_type: 'monthly_trend',
+            label: '月度趋势分析',
+            question: '查看每月报名趋势。',
+            referenced_fields: ['报名日期', '报名人数'],
+          },
+        ],
+      },
+    }
     subscribe.mockResolvedValue('terminal')
     createConversation.mockResolvedValue({
       id: 'conversation-1',
@@ -161,22 +210,65 @@ describe('AnalysisWorkbenchPage', () => {
     expect(screen.queryByText(/测试分析模式/)).not.toBeInTheDocument()
   })
 
-  it('fills both controlled example questions without submitting them', async () => {
+  it('shows a loading placeholder while dataset recommendations load', () => {
+    recommendationsPending = true
+
+    renderPage()
+
+    expect(screen.getByText('正在准备推荐问题')).toBeInTheDocument()
+  })
+
+  it('uses recommendation data for the current dataset and shows the backend source', () => {
+    recommendationsByDataset['file-2'] = {
+      dataset_version_id: 'file-2',
+      source: 'template',
+      generated_at: '2026-08-06T10:01:00Z',
+      recommendations: [{
+        id: 'recommendation-file-2',
+        intent_type: 'monthly_trend',
+        label: '区域月度变化',
+        question: '查看各区域的月度变化。',
+        referenced_fields: ['区域', '日期'],
+      }],
+    }
+
+    const firstRender = renderPage()
+    expect(screen.getByText('AI 推荐')).toBeInTheDocument()
+    expect(screen.getByText('课程组合比较')).toBeInTheDocument()
+
+    firstRender.unmount()
+    renderPage('/datasets/file-2/analysis')
+
+    expect(screen.getByText('字段模板')).toBeInTheDocument()
+    expect(screen.getByText('区域月度变化')).toBeInTheDocument()
+    expect(screen.queryByText('课程组合比较')).not.toBeInTheDocument()
+  })
+
+  it('renders a partial one-card recommendation response', () => {
+    recommendationsByDataset['file-1'].recommendations = [recommendationsByDataset['file-1'].recommendations[0]]
+
+    renderPage()
+
+    expect(screen.getByRole('button', { name: '使用课程组合比较推荐' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '使用月度趋势分析推荐' })).not.toBeInTheDocument()
+  })
+
+  it('keeps manual input available when recommendations cannot be loaded', () => {
+    recommendationsError = new Error('network unavailable')
+
+    renderPage()
+
+    expect(screen.getByText('推荐问题暂时不可用')).toBeInTheDocument()
+    expect(screen.getByLabelText('输入分析问题')).toBeEnabled()
+  })
+
+  it('fills a dataset recommendation without submitting it', async () => {
     const user = userEvent.setup()
     renderPage()
     const input = screen.getByLabelText('输入分析问题')
 
-    await user.click(screen.getByRole('button', { name: '使用课程组合比较示例' }))
-    expect(input).toHaveValue(
-      '请分析不同课程类别、课程难度、购买渠道和主要学习设备对课程完成率、退款率及课程评分的影响。找出报名人数较多但完成率偏低的组合，并用表格和图表展示关键结论，再给出运营建议。',
-    )
-    expect(createConversation).not.toHaveBeenCalled()
-    expect(createRun).not.toHaveBeenCalled()
-
-    await user.click(screen.getByRole('button', { name: '使用月度趋势分析示例' }))
-    expect(input).toHaveValue(
-      '请按月份统计各课程类别的报名人数、实付金额和平均完成率趋势，识别增长最快、下滑最明显或波动异常的课程类别，并生成趋势图。',
-    )
+    await user.click(screen.getByRole('button', { name: '使用课程组合比较推荐' }))
+    expect(input).toHaveValue('比较课程类别与完成率。')
     expect(createConversation).not.toHaveBeenCalled()
     expect(createRun).not.toHaveBeenCalled()
   })
