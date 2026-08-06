@@ -105,26 +105,33 @@ class ChartPlanner:
             else None
         )
         is_time_series = time_dimension is not None
+        category_dimensions = [
+            item for item in schema.dimensions if item.role == "category"
+        ]
+        use_top_ten = (
+            not is_time_series
+            and (len(category_dimensions) > 1 or result.row_count > 10)
+        )
         return [
             ChartSpec(
                 source_step_id=source_step_id,
                 priority_source_step_id=(
-                    None if is_time_series else priority_source_step_id
+                    priority_source_step_id if use_top_ten else None
                 ),
                 chart_type=chart_type,
-                orientation="vertical" if is_time_series else "horizontal",
+                orientation="horizontal" if use_top_ten else "vertical",
                 x_field=x_dimension.id,
                 y_fields=[item.id for item in metrics],
                 color_field=color_field,
                 title=(
                     self._title(schema, metrics)
-                    if is_time_series
-                    else "重点 Top 10"
+                    if not use_top_ten
+                    else self._top_title(result.row_count, metrics)
                 ),
                 limit=(
                     min(result.row_count, 100)
                     if is_time_series
-                    else min(result.row_count, 10)
+                    else min(result.row_count, 10 if use_top_ten else 100)
                 ),
                 unit=unit,
             )
@@ -140,3 +147,8 @@ class ChartPlanner:
         )
         metric_labels = "、".join(item.label for item in metrics)
         return f"{dimension_labels}：{metric_labels}"
+
+    @staticmethod
+    def _top_title(row_count: int, metrics: list) -> str:
+        metric_labels = "、".join(item.label for item in metrics)
+        return f"重点 Top {min(row_count, 10)}：{metric_labels}"

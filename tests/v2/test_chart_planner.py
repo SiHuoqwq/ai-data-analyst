@@ -211,7 +211,12 @@ def test_group_planner_groups_percentages_but_separates_other_units():
     assert all(item.color_field is None for item in specs)
     assert all(item.orientation == "horizontal" for item in specs)
     assert all(item.limit == 10 for item in specs)
-    assert all(item.title == "重点 Top 10" for item in specs)
+    assert "报名人数" in by_unit["count"].title
+    assert "平均完成率" in by_unit["percentage"].title
+    assert "退款率" in by_unit["percentage"].title
+    assert "平均评分" in by_unit["score"].title
+    assert len({item.title for item in specs}) == 3
+    assert all(item.title.startswith("重点 Top 10：") for item in specs)
     assert all(
         item.priority_source_step_id == "underperforming" for item in specs
     )
@@ -245,6 +250,34 @@ def test_group_planner_keeps_all_rows_when_fewer_than_top_ten():
 
     assert specs[0].orientation == "horizontal"
     assert specs[0].limit == 3
+    assert specs[0].title == "重点 Top 3：报名人数"
+
+
+def test_low_cardinality_single_dimension_keeps_vertical_behavior():
+    schema = ResultSchema(
+        dimensions=[
+            ResultDimension(
+                id="dimension_1",
+                label="课程类别",
+                role="category",
+                data_type="string",
+                source_field="课程类别",
+            )
+        ],
+        metrics=[_metric("sample_count", "报名人数", "count")],
+        grain=["dimension_1"],
+    )
+
+    specs = ChartPlanner().plan(
+        "group_aggregate",
+        _result(schema, row_count=3),
+        priority_source_step_id="underperforming",
+    )
+
+    assert specs[0].orientation == "vertical"
+    assert specs[0].limit == 3
+    assert specs[0].priority_source_step_id is None
+    assert specs[0].title == "课程类别：报名人数"
 
 
 def test_planner_rejects_missing_output_contract():
