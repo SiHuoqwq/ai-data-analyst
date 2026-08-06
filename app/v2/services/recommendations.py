@@ -204,9 +204,15 @@ class DatasetRecommendationService:
             if item.get("name") and self._is_public_field(str(item["name"]))
         }
         ordered_fields = self._registry_ordered_fields(field_types)
+        metric_definitions = {
+            field: definition
+            for metric_id, definition in self.registry.metrics.items()
+            for field in (metric_id, definition.source_field)
+            if field is not None
+        }
 
         def is_metric(field: str) -> bool:
-            return any(
+            return field in metric_definitions or any(
                 marker in field_types[field]
                 for marker in ("float", "decimal", "number", "bool")
             )
@@ -227,11 +233,26 @@ class DatasetRecommendationService:
             if not is_metric(field) and not is_date_hint(field)
         ]
         metrics = [field for field in ordered_fields if is_metric(field)]
+        metric_semantics = {
+            field: definition.semantic
+            for field, definition in metric_definitions.items()
+        }
+        group_metrics = [
+            field
+            for field in metrics
+            if metric_semantics.get(field)
+            in {"平均完成率", "退款率", "平均评分"}
+        ]
+        monthly_metrics = [
+            field
+            for field in metrics
+            if metric_semantics.get(field) in {"实付金额", "平均完成率"}
+        ]
         dates = [field for field in ordered_fields if is_date_hint(field)]
         candidates: list[RecommendationCandidate] = []
         if dimensions:
             dimension = dimensions[0]
-            referenced_fields = [dimension, *metrics[:1]]
+            referenced_fields = [dimension, *group_metrics[:1]]
             candidates.append(
                 RecommendationCandidate(
                     intent_type="group_comparison",
@@ -243,7 +264,11 @@ class DatasetRecommendationService:
         if dimensions and dates:
             dimension = dimensions[0]
             date_field = dates[0]
-            referenced_fields = [dimension, date_field, *metrics[:1]]
+            referenced_fields = [
+                dimension,
+                date_field,
+                *monthly_metrics[:1],
+            ]
             candidates.append(
                 RecommendationCandidate(
                     intent_type="monthly_trend",

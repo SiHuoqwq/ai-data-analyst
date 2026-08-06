@@ -90,6 +90,59 @@ def valid_generation() -> RawGeneration:
     )
 
 
+@pytest.mark.parametrize(
+    ("columns", "group_fields", "monthly_fields"),
+    [
+        (
+            [
+                {"name": "课程类别", "dtype": "object"},
+                {"name": "报名日期", "dtype": "datetime64[ns]"},
+                {"name": "实付金额", "dtype": "int64"},
+                {"name": "课程完成率", "dtype": "int64"},
+                {"name": "课程评分", "dtype": "int64"},
+            ],
+            ["课程类别", "课程完成率"],
+            ["课程类别", "报名日期", "实付金额"],
+        ),
+        (
+            [
+                {"name": "category", "dtype": "object"},
+                {"name": "enrollment_date", "dtype": "datetime64[ns]"},
+                {"name": "paid_amount", "dtype": "int64"},
+                {"name": "completion_rate", "dtype": "int64"},
+                {"name": "rating", "dtype": "int64"},
+            ],
+            ["category", "completion_rate"],
+            ["category", "enrollment_date", "paid_amount"],
+        ),
+    ],
+)
+def test_template_candidates_use_registered_integer_metric_contracts(
+    columns,
+    group_fields,
+    monthly_fields,
+):
+    record = FileModel(
+        id="registered-integer-metrics",
+        filename="registered-integer-metrics.csv",
+        filepath="registered-integer-metrics.csv",
+        file_type="csv",
+        row_count=2,
+        col_count=len(columns),
+        columns_info=columns,
+        profile_report="",
+    )
+
+    candidates = DatasetRecommendationService()._template_candidates(record)
+
+    assert [candidate.intent_type for candidate in candidates] == [
+        "group_comparison",
+        "monthly_trend",
+    ]
+    assert candidates[0].referenced_fields == group_fields
+    assert candidates[1].referenced_fields == monthly_fields
+
+
 def test_cache_miss_validates_and_persists_one_model_candidate_per_intent(
     v2_runtime, tmp_path
 ):

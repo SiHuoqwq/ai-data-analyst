@@ -4,6 +4,8 @@ import httpx
 import pytest
 
 from app.db.models import FileModel
+from app.v2.schemas.recommendations import RecommendationCandidate
+from app.v2.services.plan_compiler import PlanCompilationError, PlanCompiler
 from app.v2.services.provider import DeepSeekProvider, FakeAnalysisProvider, ProviderError
 
 
@@ -72,6 +74,248 @@ def provider_with(handler) -> DeepSeekProvider:
             base_url="https://unit.test",
         ),
     )
+
+
+def recommendation_record(columns: list[tuple[str, str]]) -> FileModel:
+    return FileModel(
+        id="recommendation-dataset",
+        filename="learning-operations.csv",
+        filepath="learning-operations.csv",
+        file_type="csv",
+        row_count=10,
+        col_count=len(columns),
+        columns_info=[
+            {"name": name, "dtype": dtype} for name, dtype in columns
+        ],
+        profile_report="",
+    )
+
+
+@pytest.mark.parametrize(
+    (
+        "intent_type",
+        "columns",
+        "referenced_fields",
+        "expected_semantic",
+        "expected_aggregation",
+        "expected_result_id",
+        "expected_unit",
+    ),
+    [
+        (
+            "group_comparison",
+            [("课程类别", "object"), ("课程完成率", "float64")],
+            ["课程类别", "课程完成率"],
+            "平均完成率",
+            "mean",
+            "completion_rate_mean",
+            "percentage",
+        ),
+        (
+            "group_comparison",
+            [("课程类别", "object"), ("课程评分", "float64")],
+            ["课程类别", "课程评分"],
+            "平均评分",
+            "mean",
+            "rating_mean",
+            "score",
+        ),
+        (
+            "monthly_trend",
+            [
+                ("课程类别", "object"),
+                ("报名日期", "datetime64[ns]"),
+                ("实付金额", "float64"),
+            ],
+            ["课程类别", "报名日期", "实付金额"],
+            "实付金额",
+            "sum",
+            "paid_amount_sum",
+            "currency",
+        ),
+        (
+            "monthly_trend",
+            [
+                ("课程类别", "object"),
+                ("报名日期", "datetime64[ns]"),
+                ("课程完成率", "float64"),
+            ],
+            ["课程类别", "报名日期", "课程完成率"],
+            "平均完成率",
+            "mean",
+            "completion_rate_mean",
+            "percentage",
+        ),
+    ],
+)
+def test_recommendation_validation_uses_registered_metric_contracts(
+    intent_type,
+    columns,
+    referenced_fields,
+    expected_semantic,
+    expected_aggregation,
+    expected_result_id,
+    expected_unit,
+):
+    record = recommendation_record(columns)
+    candidate = RecommendationCandidate(
+        intent_type=intent_type,
+        label="Analyze registered metric",
+        question="Analyze the selected registered metric.",
+        referenced_fields=referenced_fields,
+    )
+
+    intents = DeepSeekProvider._recommendation_validation_intents(
+        candidate,
+        record,
+    )
+    assert len(intents) == 1
+    intent = intents[0]
+    assert [
+        (metric.semantic, metric.source_field, metric.aggregation)
+        for metric in intent.metrics
+    ] == [
+        (
+            expected_semantic,
+            referenced_fields[-1],
+            expected_aggregation,
+        )
+    ]
+
+    plan = PlanCompiler().compile(intent, record)
+    aggregate_step = plan.step(
+        "monthly_aggregate"
+        if intent_type == "monthly_trend"
+        else "group_aggregate"
+    )
+    assert [
+        (metric.id, metric.unit) for metric in aggregate_step.output_schema.metrics
+    ] == [(expected_result_id, expected_unit)]
+
+
+@pytest.mark.parametrize(
+    (
+        "intent_type",
+        "columns",
+        "referenced_fields",
+        "expected_dimensions",
+        "aggregate_step_id",
+        "result_id",
+    ),
+    [
+        (
+            "group_comparison",
+            [("segment", "object"), ("score", "float64")],
+            ["segment", "score"],
+            ["segment"],
+            "group_aggregate",
+            "sample_count",
+        ),
+        (
+            "monthly_trend",
+            [
+                ("segment", "object"),
+                ("observed_at", "datetime64[ns]"),
+                ("score", "float64"),
+            ],
+            ["segment", "observed_at", "score"],
+            ["segment"],
+            "monthly_aggregate",
+            "enrollment_count",
+        ),
+        (
+            "group_comparison",
+            [("segment", "object"), ("score", "int64")],
+            ["segment", "score"],
+            ["segment"],
+            "group_aggregate",
+            "sample_count",
+        ),
+        (
+            "monthly_trend",
+            [
+                ("segment", "object"),
+                ("observed_at", "datetime64[ns]"),
+                ("score", "int64"),
+            ],
+            ["segment", "observed_at", "score"],
+            ["segment"],
+            "monthly_aggregate",
+            "enrollment_count",
+        ),
+    ],
+)
+def test_recommendation_validation_does_not_guess_unknown_numeric_semantics(
+    intent_type,
+    columns,
+    referenced_fields,
+    expected_dimensions,
+    aggregate_step_id,
+    result_id,
+):
+    record = recommendation_record(columns)
+    candidate = RecommendationCandidate(
+        intent_type=intent_type,
+        label="Analyze unknown metric",
+        question="Analyze the selected fields.",
+        referenced_fields=referenced_fields,
+    )
+
+    intents = DeepSeekProvider._recommendation_validation_intents(
+        candidate,
+        record,
+    )
+    assert len(intents) == 1
+    intent = intents[0]
+    assert intent.dimensions == expected_dimensions
+    assert [
+        (metric.semantic, metric.source_field, metric.aggregation)
+        for metric in intent.metrics
+    ] == [("报名人数", None, "count")]
+
+    plan = PlanCompiler().compile(intent, record)
+    assert [
+        (metric.id, metric.unit)
+        for metric in plan.step(aggregate_step_id).output_schema.metrics
+    ] == [(result_id, "count")]
+
+
+@pytest.mark.parametrize(
+    ("intent_type", "columns", "referenced_fields"),
+    [
+        (
+            "group_comparison",
+            [("课程类别", "object"), ("实付金额", "float64")],
+            ["课程类别", "实付金额"],
+        ),
+        (
+            "monthly_trend",
+            [
+                ("课程类别", "object"),
+                ("报名日期", "datetime64[ns]"),
+                ("课程评分", "float64"),
+            ],
+            ["课程类别", "报名日期", "课程评分"],
+        ),
+    ],
+)
+def test_recommendation_validation_rejects_registered_metric_in_wrong_workflow(
+    intent_type,
+    columns,
+    referenced_fields,
+):
+    record = recommendation_record(columns)
+    candidate = RecommendationCandidate(
+        intent_type=intent_type,
+        label="Analyze unsupported registered metric",
+        question="Analyze the selected registered metric.",
+        referenced_fields=referenced_fields,
+    )
+
+    with pytest.raises(PlanCompilationError) as raised:
+        DeepSeekProvider._recommendation_validation_intents(candidate, record)
+
+    assert raised.value.code == "UNSUPPORTED_RECOMMENDATION_METRIC"
 
 
 def test_deepseek_returns_two_valid_recommendations_from_mocked_json(tmp_path):
