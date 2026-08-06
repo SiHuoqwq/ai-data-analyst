@@ -8,7 +8,11 @@ from app.v2.schemas.results import (
     ToolOutputContract,
 )
 from app.v2.services.analytics import ToolExecutionResult
-from app.v2.services.chart_planner import ChartPlanningError, ChartPlanner
+from app.v2.services.chart_planner import (
+    ChartPlanningError,
+    ChartPlanner,
+    ChartSpec,
+)
 
 
 def _result(schema: ResultSchema, row_count: int = 2) -> ToolExecutionResult:
@@ -141,6 +145,32 @@ def test_monthly_planner_keeps_the_complete_supported_time_range():
     assert specs[0].orientation == "vertical"
     assert specs[0].priority_source_step_id is None
 
+
+def test_chart_spec_preserves_existing_keyword_constructor_defaults():
+    spec = ChartSpec(
+        source_step_id="aggregate",
+        chart_type="bar",
+        x_field="dimension_1",
+        y_fields=["sample_count"],
+        color_field=None,
+        title="课程组合",
+        limit=20,
+        unit="count",
+    )
+
+    assert spec.orientation == "vertical"
+    assert spec.priority_source_step_id is None
+    assert spec.arguments() == {
+        "source_step_id": "aggregate",
+        "priority_source_step_id": None,
+        "chart_type": "bar",
+        "orientation": "vertical",
+        "x_field": "dimension_1",
+        "y_fields": ["sample_count"],
+        "color_field": None,
+        "title": "课程组合",
+        "limit": 20,
+    }
 
 def test_group_planner_groups_percentages_but_separates_other_units():
     schema = ResultSchema(

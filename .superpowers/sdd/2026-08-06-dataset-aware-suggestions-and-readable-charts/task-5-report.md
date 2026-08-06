@@ -26,3 +26,10 @@
 ## Concerns
 
 None within scope. Monthly display remains bounded by the existing supported 100-row chart input contract; this task preserves all rows within that contract.
+
+## Fix round 1: ChartSpec constructor compatibility
+
+- Root cause: the Task 5 fields `priority_source_step_id` and `orientation` were inserted before the legacy required fields without defaults, making existing keyword construction fail with missing-argument `TypeError`.
+- RED: `test_chart_spec_preserves_existing_keyword_constructor_defaults` failed with the expected missing `priority_source_step_id` and `orientation` arguments.
+- GREEN: the new fields now follow the original required interface and default to `orientation="vertical"` and `priority_source_step_id=None`; `arguments()` retains both serialized values.
+- Verification: focused related suite passed with `33 passed`; `python -m compileall -q app tests alembic` and `git diff --check` passed.

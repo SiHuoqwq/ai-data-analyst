@@ -21,15 +21,15 @@ class ChartPlanningError(RuntimeError):
 @dataclass(frozen=True)
 class ChartSpec:
     source_step_id: str
-    priority_source_step_id: str | None
     chart_type: Literal["bar", "line"]
-    orientation: Literal["vertical", "horizontal"]
     x_field: str
     y_fields: list[str]
     color_field: str | None
     title: str
     limit: int
     unit: MetricUnit
+    orientation: Literal["vertical", "horizontal"] = "vertical"
+    priority_source_step_id: str | None = None
 
     def arguments(self) -> dict:
         return {
