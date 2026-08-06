@@ -1,3 +1,21 @@
+# 2026-08-06 dataset-aware recommendation validation addendum (Fake only)
+
+This addendum records a new Fake-only validation. It does not change or
+reinterpret the paid DeepSeek acceptance evidence below.
+
+- Explicit Alembic migration reached `0002_dataset_recommendations`; an
+  unmigrated disposable database remained unmigrated at FastAPI startup.
+- `/health` reported `provider.mode=fake`. Repeated recommendation GET requests
+  for two uploaded compatible datasets returned stable cached template data, and
+  a selected card question completed a Fake Run with REST artifact recovery and
+  a chart download returning `200 image/png`.
+- The HTTP check also found that CSV date columns are currently profiled as
+  `object`, so the demo upload produces only the group-comparison card. Default
+  Fake runs use the generic workflow, so controlled group/monthly chart behavior
+  was verified by automated tests rather than this Fake HTTP flow.
+- No new paid DeepSeek recommendation acceptance was performed. Any such
+  acceptance requires separate, explicit authorization.
+
 # DeepSeek 受控演示验收报告
 
 验收日期：2026-08-06

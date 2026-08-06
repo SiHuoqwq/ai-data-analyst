@@ -246,6 +246,15 @@ docs/release/            # 架构、部署与演示材料
 - [最小 V2 后端说明](docs/v2/MINIMAL_V2_BACKEND.md)
 - [V2 重构边界](docs/v2/V2_REFACTOR_BOUNDARY.md)
 
+## Dataset-aware suggestions and readable charts
+
+- Dataset recommendation cards are generated from safe uploaded-field metadata;
+  selecting a card fills the analysis input and never starts a Run by itself.
+- High-cardinality group comparisons use server-rendered horizontal Top 10 PNG
+  charts. Monthly charts retain the complete supported month range.
+- Fake mode produces deterministic recommendation templates without any DeepSeek
+  request; real-provider acceptance remains a separately authorized activity.
+
 ## License
 
 MIT
