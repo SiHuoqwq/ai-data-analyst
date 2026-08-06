@@ -1,5 +1,5 @@
 import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -91,6 +91,26 @@ class APIMeta(APIModel):
     schema_version: str = "1.0"
     next_cursor: str | None = None
     has_more: bool | None = None
+
+
+class DatasetRecommendation(APIModel):
+    id: str
+    intent_type: Literal["group_comparison", "monthly_trend"]
+    label: str
+    question: str
+    referenced_fields: list[str]
+
+
+class DatasetRecommendations(APIModel):
+    dataset_version_id: str
+    recommendations: list[DatasetRecommendation]
+    source: Literal["model", "template"]
+    generated_at: datetime.datetime
+
+
+class DatasetRecommendationsResponse(APIModel):
+    data: DatasetRecommendations
+    meta: APIMeta
 
 
 class RunSummary(APIModel):

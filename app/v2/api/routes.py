@@ -17,6 +17,7 @@ from app.v2.schemas.api import (
     CreateConversationResponse,
     CreateRunRequest,
     CreateRunResponse,
+    DatasetRecommendationsResponse,
     RunResponse,
     StepListResponse,
 )
@@ -27,6 +28,10 @@ from app.v2.services.conversations import (
 from app.v2.services.executor import AnalysisExecutor
 from app.v2.services.queries import AnalysisQueryService
 from app.v2.services.runs import AnalysisRunService, RunServiceError
+from app.v2.services.recommendations import (
+    DatasetRecommendationService,
+    RecommendationServiceError,
+)
 from app.v2.services.streaming import RunEventStream
 
 
@@ -35,6 +40,7 @@ workers = ThreadPoolExecutor(max_workers=2, thread_name_prefix="v2-analysis")
 queries = AnalysisQueryService()
 run_service = AnalysisRunService()
 conversation_service = ConversationService()
+recommendation_service = DatasetRecommendationService()
 event_stream = RunEventStream()
 
 
@@ -50,6 +56,16 @@ def _raise_service_error(exc: RunServiceError):
     raise V2APIError(exc.status_code, exc.code, exc.message) from exc
 
 
+def _raise_recommendation_service_error(exc: RecommendationServiceError):
+    if exc.code == "DATASET_NOT_FOUND":
+        raise V2APIError(404, "DATASET_NOT_FOUND", "Dataset does not exist.") from exc
+    raise V2APIError(
+        503,
+        "RECOMMENDATIONS_UNAVAILABLE",
+        "Dataset recommendations are temporarily unavailable.",
+    ) from exc
+
+
 @router.post(
     "/conversations",
     status_code=201,
@@ -63,6 +79,35 @@ def create_conversation(body: CreateConversationRequest):
         }
     except ConversationServiceError as exc:
         _raise_service_error(exc)
+
+
+@router.get(
+    "/datasets/{dataset_version_id}/recommendations",
+    response_model=DatasetRecommendationsResponse,
+)
+def get_dataset_recommendations(
+    dataset_version_id: str,
+    provider=Depends(get_provider),
+):
+    try:
+        result = recommendation_service.get_or_generate(dataset_version_id, provider)
+        return {
+            "data": {
+                "dataset_version_id": result.dataset_version_id,
+                "recommendations": result.recommendations,
+                "source": result.source,
+                "generated_at": result.generated_at,
+            },
+            "meta": _meta(),
+        }
+    except RecommendationServiceError as exc:
+        _raise_recommendation_service_error(exc)
+    except Exception as exc:
+        raise V2APIError(
+            503,
+            "RECOMMENDATIONS_UNAVAILABLE",
+            "Dataset recommendations are temporarily unavailable.",
+        ) from exc
 
 
 @router.post(
