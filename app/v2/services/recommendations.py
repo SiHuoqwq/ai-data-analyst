@@ -14,6 +14,7 @@ from app.v2.schemas.recommendations import (
     RecommendationCandidate,
     RecommendationGeneration,
 )
+from app.v2.schemas.intents import AnalysisIntent
 from app.v2.services.plan_compiler import PlanCompilationError
 from app.v2.services.provider import DeepSeekProvider
 
@@ -131,6 +132,23 @@ class DatasetRecommendationService:
                 continue
             accepted.append(self._public_candidate(parsed, file_record))
         return accepted
+
+    def resolve_template_intent(
+        self,
+        file_record: FileModel,
+        intent_type: str,
+    ) -> AnalysisIntent | None:
+        for candidate in self._template_candidates(file_record):
+            if candidate.intent_type != intent_type:
+                continue
+            try:
+                return DeepSeekProvider._validated_recommendation_intent(
+                    candidate,
+                    file_record,
+                )
+            except (PlanCompilationError, ValueError):
+                return None
+        return None
 
     def _validated_candidate(
         self, candidate: object, file_record: FileModel

@@ -125,7 +125,7 @@ class AnalysisProvider(Protocol):
 
     def generate_intent(
         self, question: str, file_record: FileModel
-    ) -> DomainIntent: ...
+    ) -> DomainIntent | AnalysisIntent: ...
 
     def recommend_questions(
         self, file_record: FileModel
@@ -179,7 +179,7 @@ class FakeAnalysisProvider:
         self,
         question: str,
         file_record: FileModel,
-    ) -> DomainIntent:
+    ) -> DomainIntent | AnalysisIntent:
         if question == "[fake:fail]":
             raise RuntimeError("controlled fake provider failure")
         decision = self._intent_router.route(question)
@@ -189,8 +189,20 @@ class FakeAnalysisProvider:
                 "Fake provider will use its deterministic safe plan.",
                 retryable=False,
             )
+        from app.v2.services.recommendations import DatasetRecommendationService
+
+        intent = DatasetRecommendationService().resolve_template_intent(
+            file_record,
+            decision.workflow,
+        )
+        if intent is None:
+            raise ProviderError(
+                "FAKE_SAFE_PLAN_FALLBACK",
+                "Fake provider will use its deterministic safe plan.",
+                retryable=False,
+            )
         self.last_intent_mode = "controlled_fallback"
-        return self._intent_router.default_intent(decision)
+        return intent
 
     def build_plan(self, question: str, file_record: FileModel) -> ProviderPlan:
         if question == "[fake:fail]":
@@ -559,30 +571,50 @@ class DeepSeekProvider:
                         "RECOMMENDATION_VALIDATION_FAILED",
                         "Recommended question could not be validated.",
                     ) from exc
-            compiler = (
-                PlanCompiler(
-                    validator=PlanValidator(
-                        dataframe_loader=lambda _path: parsed_frame
-                    )
-                )
-                if candidate.intent_type == "monthly_trend"
-                else PlanCompiler()
-            )
-            for intent in DeepSeekProvider._recommendation_validation_intents(
+            DeepSeekProvider._validated_recommendation_intent(
                 candidate,
                 file_record,
-            ):
-                try:
-                    plan = compiler.compile(intent, file_record)
-                    compiler.validator.validate(plan, file_record)
-                except PlanCompilationError:
-                    continue
-                break
-            else:
+                parsed_frame=parsed_frame,
+            )
+
+    @staticmethod
+    def _validated_recommendation_intent(
+        candidate: RecommendationCandidate,
+        file_record: FileModel,
+        *,
+        parsed_frame=None,
+    ) -> AnalysisIntent:
+        if candidate.intent_type == "monthly_trend" and parsed_frame is None:
+            try:
+                parsed_frame = parse_file(file_record.filepath)
+            except Exception as exc:
                 raise PlanCompilationError(
-                    "INVALID_RECOMMENDATION_FIELDS",
-                    "Recommended question does not map to an executable workflow.",
+                    "RECOMMENDATION_VALIDATION_FAILED",
+                    "Recommended question could not be validated.",
+                ) from exc
+        compiler = (
+            PlanCompiler(
+                validator=PlanValidator(
+                    dataframe_loader=lambda _path: parsed_frame
                 )
+            )
+            if candidate.intent_type == "monthly_trend"
+            else PlanCompiler()
+        )
+        for intent in DeepSeekProvider._recommendation_validation_intents(
+            candidate,
+            file_record,
+        ):
+            try:
+                plan = compiler.compile(intent, file_record)
+                compiler.validator.validate(plan, file_record)
+            except PlanCompilationError:
+                continue
+            return intent
+        raise PlanCompilationError(
+            "INVALID_RECOMMENDATION_FIELDS",
+            "Recommended question does not map to an executable workflow.",
+        )
 
     @staticmethod
     def _recommendation_validation_intents(

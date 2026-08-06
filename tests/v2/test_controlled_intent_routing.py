@@ -273,6 +273,77 @@ def test_fake_provider_executes_template_recommendations_as_compiled_workflows(
     session.close()
 
 
+def test_fake_provider_executes_each_template_for_minimal_dataset_fields(
+    v2_runtime,
+):
+    csv_path = Path(v2_runtime["database_path"]).with_name(
+        "minimal-template-fields.csv"
+    )
+    csv_path.write_text(
+        "segment,observed_at,score\n"
+        "A,2026-01-05,0.82\n"
+        "B,2026-02-12,0.74\n",
+        encoding="utf-8",
+    )
+    session = database.SessionLocal()
+    file_record = session.get(FileModel, "file-1")
+    file_record.filepath = str(csv_path)
+    file_record.filename = csv_path.name
+    file_record.row_count = 2
+    file_record.col_count = 3
+    file_record.columns_info = [
+        {"name": "segment", "dtype": "object"},
+        {"name": "observed_at", "dtype": "datetime64[ns]"},
+        {"name": "score", "dtype": "float64"},
+    ]
+    session.commit()
+    session.close()
+
+    provider = FakeAnalysisProvider()
+    generated = DatasetRecommendationService().get_or_generate(
+        "file-1",
+        provider,
+    )
+    assert [
+        item["intent_type"] for item in generated.recommendations
+    ] == ["group_comparison", "monthly_trend"]
+
+    service = AnalysisRunService()
+    run_ids = {}
+    for item in generated.recommendations:
+        run = service.create_run(
+            "conversation-1",
+            "file-1",
+            item["question"],
+            f"minimal-template-{item['intent_type']}",
+        )
+        AnalysisExecutor(provider).execute(run.id)
+        run_ids[item["intent_type"]] = run.id
+
+    session = database.SessionLocal()
+    stored = {
+        intent_type: session.get(AnalysisRunModel, run_id)
+        for intent_type, run_id in run_ids.items()
+    }
+    assert {run.status for run in stored.values()} == {"completed"}
+    assert {
+        run.context_snapshot_json["intent_mode"] for run in stored.values()
+    } == {"controlled_fallback"}
+    operations = {
+        intent_type: [
+            step.operation
+            for step in session.query(RunStepModel)
+            .filter_by(run_id=run_id)
+            .order_by(RunStepModel.sequence)
+            .all()
+        ]
+        for intent_type, run_id in run_ids.items()
+    }
+    assert "group_aggregate" in operations["group_comparison"]
+    assert "monthly_trend" in operations["monthly_trend"]
+    session.close()
+
+
 def test_fake_provider_marks_unsupported_questions_for_safe_plan_fallback(
     v2_runtime,
 ):
