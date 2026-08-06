@@ -194,7 +194,14 @@ class DatasetRecommendationService:
             )
 
         def is_date_hint(field: str) -> bool:
-            return "date" in field_types[field] or "time" in field_types[field]
+            registry_date_fields = {
+                item.source_field for item in self.registry.dates.values()
+            }
+            return (
+                "date" in field_types[field]
+                or "time" in field_types[field]
+                or field in registry_date_fields
+            )
 
         dimensions = [
             field

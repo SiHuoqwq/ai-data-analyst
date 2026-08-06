@@ -2,6 +2,7 @@ import json
 
 from fastapi.testclient import TestClient
 
+from app.config import settings
 from app.db import database
 from app.db.models import FileModel
 from app.main import app
@@ -80,6 +81,57 @@ def test_get_recommendations_returns_strict_fake_templates_and_cached_result(
             str(v2_runtime["database_path"]),
         ):
             assert marker not in rendered
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_uploaded_csv_with_object_iso_date_gets_monthly_template(
+    v2_runtime, tmp_path, monkeypatch
+):
+    upload_dir = tmp_path / "uploads"
+    upload_dir.mkdir()
+    monkeypatch.setattr(settings, "upload_dir", str(upload_dir))
+    app.dependency_overrides[get_provider] = lambda: FakeAnalysisProvider()
+    try:
+        with TestClient(app) as client:
+            uploaded = client.post(
+                "/api/v1/files/upload",
+                files={
+                    "file": (
+                        "learning-operations.csv",
+                        (
+                            "课程类别,报名日期,课程完成率\n"
+                            "数据分析,2026-01-05,0.82\n"
+                            "产品设计,2026-02-12,0.74\n"
+                        ).encode("utf-8"),
+                        "text/csv",
+                    )
+                },
+            )
+            assert uploaded.status_code == 200
+            dataset_id = uploaded.json()["id"]
+
+            session = database.SessionLocal()
+            try:
+                record = session.get(FileModel, dataset_id)
+                date_column = next(
+                    item
+                    for item in record.columns_info
+                    if item["name"] == "报名日期"
+                )
+                assert date_column["dtype"] == "object"
+            finally:
+                session.close()
+
+            response = client.get(
+                f"/api/v2/datasets/{dataset_id}/recommendations"
+            )
+
+        assert response.status_code == 200
+        assert {
+            item["intent_type"]
+            for item in response.json()["data"]["recommendations"]
+        } == {"group_comparison", "monthly_trend"}
     finally:
         app.dependency_overrides.clear()
 

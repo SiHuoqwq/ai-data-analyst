@@ -445,3 +445,54 @@ def test_incompatible_dataset_caches_only_executable_template_questions(
 
     assert result.source == "template"
     assert result.recommendations == []
+
+
+def test_object_category_fields_do_not_create_monthly_template(
+    v2_runtime, tmp_path
+):
+    add_dataset(
+        tmp_path,
+        dataset_id="dataset-object-categories",
+        columns=[
+            {"name": "category", "dtype": "object"},
+            {"name": "region", "dtype": "object"},
+        ],
+        content="category,region\nA,North\nB,South\n",
+    )
+    fake = StubProvider(RecommendationGeneration(candidates=[]), name="fake")
+
+    result = DatasetRecommendationService().get_or_generate(
+        "dataset-object-categories", fake
+    )
+
+    assert [
+        item["intent_type"] for item in result.recommendations
+    ] == ["group_comparison"]
+
+
+def test_object_registry_date_requires_locally_parseable_values(
+    v2_runtime, tmp_path
+):
+    add_dataset(
+        tmp_path,
+        dataset_id="dataset-unparseable-date",
+        columns=[
+            {"name": "课程类别", "dtype": "object"},
+            {"name": "报名日期", "dtype": "object"},
+            {"name": "课程完成率", "dtype": "float64"},
+        ],
+        content=(
+            "课程类别,报名日期,课程完成率\n"
+            "数据分析,not-a-date,0.82\n"
+            "产品设计,still-not-a-date,0.74\n"
+        ),
+    )
+    fake = StubProvider(RecommendationGeneration(candidates=[]), name="fake")
+
+    result = DatasetRecommendationService().get_or_generate(
+        "dataset-unparseable-date", fake
+    )
+
+    assert [
+        item["intent_type"] for item in result.recommendations
+    ] == ["group_comparison"]
