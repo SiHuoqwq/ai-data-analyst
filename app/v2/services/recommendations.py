@@ -1,9 +1,10 @@
-import uuid
 import re
+import uuid
 from dataclasses import dataclass
 from typing import Any, Callable
 
 from pydantic import ValidationError
+from sqlalchemy.exc import IntegrityError
 
 from app.db.database import SessionLocal
 from app.db.models import FileModel
@@ -59,7 +60,11 @@ class DatasetRecommendationService:
                     "DATASET_NOT_FOUND", "Dataset does not exist.", 404
                 )
 
-            accepted = self._model_recommendations(file_record, provider)
+            accepted = (
+                []
+                if getattr(provider, "name", None) == "fake"
+                else self._model_recommendations(file_record, provider)
+            )
             source = "model" if accepted else "template"
             if not accepted:
                 accepted = self._template_recommendations(file_record)
@@ -76,7 +81,18 @@ class DatasetRecommendationService:
                 updated_at=now,
             )
             session.add(row)
-            session.commit()
+            try:
+                session.commit()
+            except IntegrityError:
+                session.rollback()
+                winner = (
+                    session.query(DatasetRecommendationModel)
+                    .filter_by(dataset_version_id=dataset_version_id)
+                    .first()
+                )
+                if winner:
+                    return self._result_from_model(winner)
+                raise
             session.refresh(row)
             return self._result_from_model(row)
         except Exception:
@@ -99,7 +115,7 @@ class DatasetRecommendationService:
             parsed = self._validated_candidate(candidate, file_record)
             if parsed is None or parsed.intent_type in accepted_intents:
                 continue
-            accepted.append(self._public_candidate(parsed))
+            accepted.append(self._public_candidate(parsed, file_record))
             accepted_intents.add(parsed.intent_type)
         return accepted
 
@@ -113,7 +129,7 @@ class DatasetRecommendationService:
                 item["intent_type"] == parsed.intent_type for item in accepted
             ):
                 continue
-            accepted.append(self._public_candidate(parsed))
+            accepted.append(self._public_candidate(parsed, file_record))
         return accepted
 
     def _validated_candidate(
@@ -122,6 +138,11 @@ class DatasetRecommendationService:
         try:
             parsed = RecommendationCandidate.model_validate(candidate)
             if self._contains_physical_path(parsed, file_record):
+                return None
+            if any(
+                not self._is_public_field(field)
+                for field in parsed.referenced_fields
+            ):
                 return None
             DeepSeekProvider._validate_recommendation_candidates(
                 RecommendationGeneration(candidates=[parsed]), file_record
@@ -137,7 +158,24 @@ class DatasetRecommendationService:
         text = f"{candidate.label}\n{candidate.question}"
         if file_record.filepath and file_record.filepath in text:
             return True
-        return bool(re.search(r"[A-Za-z]:[\\/]", text))
+        return bool(
+            re.search(r"[A-Za-z]:[\\/]", text)
+            or re.search(r"(?<!\S)/(?:[^\s/]+/)+[^\s/]+", text)
+            or "\\\\" in text
+        )
+
+    @staticmethod
+    def _is_public_field(field: str) -> bool:
+        if any(character in field for character in ("/", "\\", ":")):
+            return False
+        return not bool(
+            re.search(
+                r"(?i)(?:^|[_\-\s])(?:api[_-]?key|api|access[_-]?token|token|"
+                r"secret|password|passwd|credential|authorization|auth|key)"
+                r"(?:$|[_\-\s])",
+                field,
+            )
+        )
 
     def _template_candidates(
         self, file_record: FileModel
@@ -145,7 +183,7 @@ class DatasetRecommendationService:
         field_types = {
             str(item.get("name")): str(item.get("dtype", "")).lower()
             for item in (file_record.columns_info or [])
-            if item.get("name")
+            if item.get("name") and self._is_public_field(str(item["name"]))
         }
         ordered_fields = self._registry_ordered_fields(field_types)
 
@@ -219,13 +257,51 @@ class DatasetRecommendationService:
                 return definition.label
         return field
 
-    @staticmethod
-    def _public_candidate(candidate: RecommendationCandidate) -> dict[str, Any]:
+    def _public_candidate(
+        self,
+        candidate: RecommendationCandidate,
+        file_record: FileModel,
+    ) -> dict[str, Any]:
+        field_types = {
+            str(item.get("name")): str(item.get("dtype", "")).lower()
+            for item in (file_record.columns_info or [])
+        }
+
+        def is_metric(field: str) -> bool:
+            return any(
+                marker in field_types.get(field, "")
+                for marker in ("float", "decimal", "number", "bool")
+            )
+
+        def is_date(field: str) -> bool:
+            return "date" in field_types.get(field, "") or "time" in field_types.get(
+                field, ""
+            )
+
+        dimensions = [
+            field
+            for field in candidate.referenced_fields
+            if not is_metric(field) and not is_date(field)
+        ]
+        dimension = dimensions[0] if dimensions else None
+        if candidate.intent_type == "group_comparison" and dimension:
+            label = f"Compare by {self._field_label(dimension)}"
+            question = (
+                f"How do key outcomes compare across {self._field_label(dimension)}?"
+            )
+        elif candidate.intent_type == "monthly_trend" and dimension:
+            label = f"Monthly {self._field_label(dimension)} trend"
+            question = (
+                f"How does {self._field_label(dimension)} change by month?"
+            )
+        else:
+            label = "Monthly selected-field trend"
+            question = "How do the selected fields change by month?"
         return {
             "id": f"{candidate.intent_type}-1",
             "intent_type": candidate.intent_type,
-            "label": candidate.label,
-            "question": candidate.question,
+            "label": label,
+            "question": question,
             "referenced_fields": list(candidate.referenced_fields),
         }
 

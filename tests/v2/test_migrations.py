@@ -23,8 +23,41 @@ def test_upgrade_downgrade_upgrade_preserves_v1_and_creates_v2_tables(tmp_path):
 
     engine = create_engine(database_url)
     expected_v1 = {"files", "conversations", "messages", "charts"}
-    expected_v2 = {"analysis_runs", "run_steps", "artifacts", "run_events"}
+    expected_v2 = {
+        "analysis_runs",
+        "run_steps",
+        "artifacts",
+        "run_events",
+        "dataset_recommendations",
+    }
     assert expected_v1 | expected_v2 <= set(inspect(engine).get_table_names())
+    recommendation_columns = {
+        item["name"]: item for item in inspect(engine).get_columns("dataset_recommendations")
+    }
+    assert {
+        "id",
+        "dataset_version_id",
+        "recommendations_json",
+        "source",
+        "provider_name",
+        "provider_model",
+        "created_at",
+        "updated_at",
+    } == set(recommendation_columns)
+    assert not recommendation_columns["created_at"]["nullable"]
+    assert not recommendation_columns["updated_at"]["nullable"]
+    assert any(
+        item["constrained_columns"] == ["dataset_version_id"]
+        for item in inspect(engine).get_foreign_keys("dataset_recommendations")
+    )
+    assert any(
+        item["column_names"] == ["dataset_version_id"]
+        for item in inspect(engine).get_unique_constraints("dataset_recommendations")
+    )
+    assert any(
+        "source IN ('model','template')" in item["sqltext"]
+        for item in inspect(engine).get_check_constraints("dataset_recommendations")
+    )
     with engine.connect() as connection:
         assert connection.execute(text("PRAGMA foreign_key_check")).all() == []
 

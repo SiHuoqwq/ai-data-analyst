@@ -1,8 +1,11 @@
 from dataclasses import dataclass
 
+import pytest
+from sqlalchemy.exc import IntegrityError
+
 from app.db import database
 from app.db.models import FileModel
-from app.v2.db.models import DatasetRecommendationModel
+from app.v2.db.models import DatasetRecommendationModel, utc_now
 from app.v2.schemas.recommendations import (
     RecommendationCandidate,
     RecommendationGeneration,
@@ -193,8 +196,16 @@ def test_rejects_missing_and_nonexecutable_model_candidates_before_caching(
     )
 
 
+@pytest.mark.parametrize(
+    "unsafe_path",
+    [
+        "C:/private/rows.csv",
+        "/private/raw/rows.csv",
+        "\\\\server\\share\\rows.csv",
+    ],
+)
 def test_rejects_model_candidates_that_include_physical_paths(
-    v2_runtime, tmp_path
+    v2_runtime, tmp_path, unsafe_path
 ):
     add_dataset(
         tmp_path,
@@ -208,7 +219,7 @@ def test_rejects_model_candidates_that_include_physical_paths(
                 RecommendationCandidate(
                     intent_type="group_comparison",
                     label="Private file comparison",
-                    question="Compare C:/private/rows.csv by category.",
+                    question=f"Compare {unsafe_path} by category.",
                     referenced_fields=["category"],
                 )
             ]
@@ -218,7 +229,171 @@ def test_rejects_model_candidates_that_include_physical_paths(
     result = DatasetRecommendationService().get_or_generate("dataset-path", provider)
 
     assert result.source == "template"
-    assert all("C:/private/rows.csv" not in item["question"] for item in result.recommendations)
+    assert all(unsafe_path not in item["question"] for item in result.recommendations)
+
+
+def test_model_recommendations_cache_only_derived_public_text(
+    v2_runtime, tmp_path
+):
+    columns = [
+        *compatible_columns(),
+        {"name": "notes", "dtype": "object", "sample_values": ["SAMPLE_VALUE_MARKER"]},
+    ]
+    add_dataset(
+        tmp_path,
+        dataset_id="dataset-redacted",
+        columns=columns,
+        content="category,enrolled_at,completion_rate,notes\nA,2026-01-01,0.8,private\n",
+    )
+    provider = StubProvider(
+        RecommendationGeneration(
+            candidates=[
+                RecommendationCandidate(
+                    intent_type="group_comparison",
+                    label="SAMPLE_VALUE_MARKER",
+                    question=(
+                        "Authorization: Bearer API_TOKEN_MARKER at "
+                        "the selected category."
+                    ),
+                    referenced_fields=["category", "completion_rate"],
+                )
+            ]
+        )
+    )
+
+    result = DatasetRecommendationService().get_or_generate(
+        "dataset-redacted", provider
+    )
+
+    assert result.source == "model"
+    assert result.recommendations == [
+        {
+            "id": "group_comparison-1",
+            "intent_type": "group_comparison",
+            "label": "Compare by category",
+            "question": "How do key outcomes compare across category?",
+            "referenced_fields": ["category", "completion_rate"],
+        }
+    ]
+
+
+def test_fake_provider_skips_model_candidates_and_uses_templates(
+    v2_runtime, tmp_path
+):
+    add_dataset(
+        tmp_path,
+        dataset_id="dataset-fake-candidates",
+        columns=compatible_columns(),
+        content="category,enrolled_at,completion_rate\nA,2026-01-01,0.8\n",
+    )
+    fake = StubProvider(valid_generation(), name="fake")
+
+    result = DatasetRecommendationService().get_or_generate(
+        "dataset-fake-candidates", fake
+    )
+
+    assert result.source == "template"
+    assert fake.calls == 0
+    assert result.recommendations[0]["question"] == (
+        "How do key outcomes compare across category?"
+    )
+
+
+def test_sensitive_field_names_are_not_available_to_model_or_templates(
+    v2_runtime, tmp_path
+):
+    add_dataset(
+        tmp_path,
+        dataset_id="dataset-sensitive-field",
+        columns=[{"name": "api_key", "dtype": "object"}],
+        content="api_key\nsecret\n",
+    )
+    fake = StubProvider(RecommendationGeneration(candidates=[]), name="fake")
+
+    result = DatasetRecommendationService().get_or_generate(
+        "dataset-sensitive-field", fake
+    )
+
+    assert result.source == "template"
+    assert result.recommendations == []
+    assert fake.calls == 0
+
+
+class RaceSession:
+    def __init__(self, file_record):
+        self.file_record = file_record
+        self.winner = None
+
+    def query(self, _model):
+        return self
+
+    def filter_by(self, **_kwargs):
+        return self
+
+    def first(self):
+        return self.winner
+
+    def get(self, _model, _dataset_version_id):
+        return self.file_record
+
+    def add(self, _row):
+        pass
+
+    def commit(self):
+        self.winner = DatasetRecommendationModel(
+            id="race-winner",
+            dataset_version_id=self.file_record.id,
+            recommendations_json=[
+                {
+                    "id": "group_comparison-1",
+                    "intent_type": "group_comparison",
+                    "label": "Winner",
+                    "question": "Winner question",
+                    "referenced_fields": ["category"],
+                }
+            ],
+            source="template",
+            created_at=utc_now(),
+            updated_at=utc_now(),
+        )
+        raise IntegrityError("INSERT", {}, RuntimeError("unique conflict"))
+
+    def rollback(self):
+        pass
+
+    def refresh(self, _row):
+        pass
+
+    def close(self):
+        pass
+
+
+def test_unique_cache_conflict_returns_existing_winner(tmp_path):
+    csv_path = tmp_path / "race.csv"
+    csv_path.write_text(
+        "category,enrolled_at,completion_rate\nA,2026-01-01,0.8\n",
+        encoding="utf-8",
+    )
+    session = RaceSession(
+        FileModel(
+            id="dataset-race",
+            filename="race.csv",
+            filepath=str(csv_path),
+            file_type="csv",
+            row_count=1,
+            col_count=3,
+            columns_info=compatible_columns(),
+            profile_report="",
+        )
+    )
+    provider = StubProvider(valid_generation())
+
+    result = DatasetRecommendationService(
+        session_factory=lambda: session
+    ).get_or_generate("dataset-race", provider)
+
+    assert result.source == "template"
+    assert result.recommendations == session.winner.recommendations_json
 
 
 def test_provider_failure_and_fake_empty_generation_use_deterministic_templates(
@@ -245,7 +420,8 @@ def test_provider_failure_and_fake_empty_generation_use_deterministic_templates(
 
     assert fallback.source == fake_result.source == "template"
     assert fallback.recommendations == fake_result.recommendations
-    assert failing.calls == fake.calls == 1
+    assert failing.calls == 1
+    assert fake.calls == 0
     assert {item["intent_type"] for item in fallback.recommendations} == {
         "group_comparison",
         "monthly_trend",
