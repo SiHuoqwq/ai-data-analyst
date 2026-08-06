@@ -1,7 +1,8 @@
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass
 from threading import Lock
-from typing import Any, Callable, Protocol
+from typing import Any, Callable, Iterator, Protocol
 
 from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
@@ -24,8 +25,14 @@ from app.v2.services.recommendation_safety import (
 )
 
 
+@dataclass
+class _DatasetLockEntry:
+    lock: Lock
+    references: int = 0
+
+
 _PROCESS_SINGLE_FLIGHT_GUARD = Lock()
-_PROCESS_DATASET_LOCKS: dict[str, Lock] = {}
+_PROCESS_DATASET_LOCKS: dict[str, _DatasetLockEntry] = {}
 
 
 @dataclass(frozen=True)
@@ -155,9 +162,26 @@ class DatasetRecommendationService:
             session.close()
 
     @staticmethod
-    def _dataset_lock(dataset_version_id: str) -> Lock:
+    @contextmanager
+    def _dataset_lock(dataset_version_id: str) -> Iterator[None]:
         with _PROCESS_SINGLE_FLIGHT_GUARD:
-            return _PROCESS_DATASET_LOCKS.setdefault(dataset_version_id, Lock())
+            entry = _PROCESS_DATASET_LOCKS.setdefault(
+                dataset_version_id,
+                _DatasetLockEntry(lock=Lock()),
+            )
+            entry.references += 1
+        entry.lock.acquire()
+        try:
+            yield
+        finally:
+            entry.lock.release()
+            with _PROCESS_SINGLE_FLIGHT_GUARD:
+                entry.references -= 1
+                if (
+                    entry.references == 0
+                    and _PROCESS_DATASET_LOCKS.get(dataset_version_id) is entry
+                ):
+                    del _PROCESS_DATASET_LOCKS[dataset_version_id]
 
     @staticmethod
     def _provider_identity(
