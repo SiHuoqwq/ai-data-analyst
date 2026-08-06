@@ -119,7 +119,7 @@ def test_explicit_migration_command_upgrades_disposable_database(tmp_path):
                 "SELECT name FROM sqlite_master WHERE type = 'table'"
             )
         }
-    assert revision == ("0001_minimal_v2",)
+    assert revision == ("0002_dataset_recommendations",)
     assert {"analysis_runs", "run_steps", "artifacts", "run_events"} <= tables
 
 
@@ -149,7 +149,7 @@ def test_explicit_migration_uses_application_database_url(tmp_path):
         revision = connection.execute(
             "SELECT version_num FROM alembic_version"
         ).fetchone()
-    assert revision == ("0001_minimal_v2",)
+    assert revision == ("0002_dataset_recommendations",)
     assert not stale_alembic_database.exists()
 
 
