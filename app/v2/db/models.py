@@ -151,3 +151,32 @@ class RunEventModel(V2Base):
     schema_version = Column(String(20), nullable=False, default="1.0")
     payload_json = Column(JSON, nullable=False)
     created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
+
+
+class DatasetRecommendationModel(V2Base):
+    __tablename__ = "dataset_recommendations"
+    __table_args__ = (
+        CheckConstraint(
+            "source IN ('model','template')",
+            name="ck_dataset_recommendations_source",
+        ),
+    )
+
+    id = Column(String, primary_key=True)
+    dataset_version_id = Column(
+        String,
+        ForeignKey("files.id"),
+        nullable=False,
+        unique=True,
+    )
+    recommendations_json = Column(JSON, nullable=False)
+    source = Column(String, nullable=False)
+    provider_name = Column(String, nullable=True)
+    provider_model = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+        onupdate=utc_now,
+    )
