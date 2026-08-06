@@ -74,7 +74,15 @@ def provider_with(handler) -> DeepSeekProvider:
     )
 
 
-def test_deepseek_returns_two_valid_recommendations_from_mocked_json():
+def test_deepseek_returns_two_valid_recommendations_from_mocked_json(tmp_path):
+    csv_path = tmp_path / "valid-recommendation.csv"
+    csv_path.write_text(
+        "course_category,enrollment_date,completion_rate\n"
+        "A,2026-01-01,0.8\n",
+        encoding="utf-8",
+    )
+    record = file_record()
+    record.filepath = str(csv_path)
     provider = provider_with(
         lambda _request: response(
             json.dumps(
@@ -104,7 +112,7 @@ def test_deepseek_returns_two_valid_recommendations_from_mocked_json():
         )
     )
 
-    result = provider.recommend_questions(file_record())
+    result = provider.recommend_questions(record)
 
     assert [item.intent_type for item in result.candidates] == [
         "group_comparison",
@@ -114,6 +122,70 @@ def test_deepseek_returns_two_valid_recommendations_from_mocked_json():
         "course_category",
         "completion_rate",
     ]
+
+
+def test_deepseek_rejects_monthly_recommendation_with_unparseable_date_values(
+    tmp_path,
+):
+    csv_path = tmp_path / "invalid-monthly-date.csv"
+    csv_path.write_text(
+        "course_category,enrollment_date,completion_rate\n"
+        "A,not-a-date,0.8\n",
+        encoding="utf-8",
+    )
+    record = file_record()
+    record.filepath = str(csv_path)
+    provider = provider_with(
+        lambda _request: response(
+            json.dumps(
+                {
+                    "candidates": [
+                        {
+                            "intent_type": "monthly_trend",
+                            "label": "Monthly enrollments",
+                            "question": "How do enrollments change by month?",
+                            "referenced_fields": [
+                                "course_category",
+                                "enrollment_date",
+                            ],
+                        }
+                    ]
+                }
+            )
+        )
+    )
+
+    with pytest.raises(ProviderError) as raised:
+        provider.recommend_questions(record)
+
+    assert raised.value.code == "PROVIDER_INVALID_RESPONSE"
+
+
+def test_deepseek_rejects_monthly_recommendation_without_a_category_field():
+    provider = provider_with(
+        lambda _request: response(
+            json.dumps(
+                {
+                    "candidates": [
+                        {
+                            "intent_type": "monthly_trend",
+                            "label": "Invalid monthly roles",
+                            "question": "How do completion rates change by month?",
+                            "referenced_fields": [
+                                "completion_rate",
+                                "enrollment_date",
+                            ],
+                        }
+                    ]
+                }
+            )
+        )
+    )
+
+    with pytest.raises(ProviderError) as raised:
+        provider.recommend_questions(file_record())
+
+    assert raised.value.code == "PROVIDER_INVALID_RESPONSE"
 
 
 @pytest.mark.parametrize(

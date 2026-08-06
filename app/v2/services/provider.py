@@ -523,39 +523,80 @@ class DeepSeekProvider:
                     "FIELD_NOT_FOUND",
                     "Recommended question references an unavailable field.",
                 )
-            compiler.compile(
-                DeepSeekProvider._recommendation_validation_intent(candidate),
+            plan = compiler.compile(
+                DeepSeekProvider._recommendation_validation_intent(
+                    candidate,
+                    file_record,
+                ),
                 file_record,
             )
+            compiler.validator.validate(plan, file_record)
 
     @staticmethod
     def _recommendation_validation_intent(
         candidate: RecommendationCandidate,
+        file_record: FileModel,
     ) -> AnalysisIntent:
-        fields = candidate.referenced_fields
-        if candidate.intent_type == "monthly_trend":
-            return AnalysisIntent(
-                analysis_type="monthly_trend",
-                dimensions=[fields[0]],
-                date_field=fields[-1],
-                metrics=[
-                    IntentMetric(
-                        semantic="报名人数",
-                        source_field=None,
-                        aggregation="count",
-                    )
-                ],
+        field_types = {
+            str(item.get("name")): str(item.get("dtype", "")).lower()
+            for item in (file_record.columns_info or [])
+        }
+        date_fields = [
+            field
+            for field in candidate.referenced_fields
+            if "date" in field_types[field] or "time" in field_types[field]
+        ]
+        numeric_fields = [
+            field
+            for field in candidate.referenced_fields
+            if any(
+                marker in field_types[field]
+                for marker in ("int", "float", "decimal", "number", "bool")
             )
-        return AnalysisIntent(
-            analysis_type="group_comparison",
-            dimensions=[fields[0]],
-            metrics=[
+        ]
+        dimension_fields = [
+            field
+            for field in candidate.referenced_fields
+            if field not in date_fields and field not in numeric_fields
+        ]
+
+        def numeric_metrics() -> list[IntentMetric]:
+            return [
+                IntentMetric(
+                    semantic="平均完成率",
+                    source_field=field,
+                    aggregation="mean",
+                )
+                for field in numeric_fields
+            ] or [
                 IntentMetric(
                     semantic="报名人数",
                     source_field=None,
                     aggregation="count",
                 )
-            ],
+            ]
+
+        if candidate.intent_type == "monthly_trend":
+            if len(date_fields) != 1 or len(dimension_fields) != 1:
+                raise PlanCompilationError(
+                    "INVALID_RECOMMENDATION_FIELDS",
+                    "Monthly recommendations require one date and one category field.",
+                )
+            return AnalysisIntent(
+                analysis_type="monthly_trend",
+                dimensions=dimension_fields,
+                date_field=date_fields[0],
+                metrics=numeric_metrics(),
+            )
+        if not dimension_fields or date_fields:
+            raise PlanCompilationError(
+                "INVALID_RECOMMENDATION_FIELDS",
+                "Group recommendations require category fields and no date fields.",
+            )
+        return AnalysisIntent(
+            analysis_type="group_comparison",
+            dimensions=dimension_fields,
+            metrics=numeric_metrics(),
         )
 
     def _validate_intent_response(self, content: str) -> DomainIntent:
