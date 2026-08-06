@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
+import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { AnalysisWorkbenchPage } from './AnalysisWorkbenchPage'
 
@@ -124,11 +124,29 @@ function LocationProbe() {
   return <output aria-label="当前地址">{location.pathname}{location.search}</output>
 }
 
+function DatasetSwitcher() {
+  const navigate = useNavigate()
+  return <button type="button" onClick={() => navigate('/datasets/file-2/analysis')}>
+    切换到数据集 file-2
+  </button>
+}
+
 function renderPage(path = '/datasets/file-1/analysis') {
   return render(
     <MemoryRouter initialEntries={[path]}>
       <Routes>
         <Route path="/datasets/:fileId/analysis" element={<><AnalysisWorkbenchPage /><LocationProbe /></>} />
+      </Routes>
+    </MemoryRouter>,
+  )
+}
+
+function renderSwitchablePage() {
+  return render(
+    <MemoryRouter initialEntries={['/datasets/file-1/analysis']}>
+      <DatasetSwitcher />
+      <Routes>
+        <Route path="/datasets/:fileId/analysis" element={<AnalysisWorkbenchPage />} />
       </Routes>
     </MemoryRouter>,
   )
@@ -218,7 +236,7 @@ describe('AnalysisWorkbenchPage', () => {
     expect(screen.getByText('正在准备推荐问题')).toBeInTheDocument()
   })
 
-  it('uses recommendation data for the current dataset and shows the backend source', () => {
+  it('clears a selected recommendation when switching datasets in one mounted workbench', async () => {
     recommendationsByDataset['file-2'] = {
       dataset_version_id: 'file-2',
       source: 'template',
@@ -231,14 +249,17 @@ describe('AnalysisWorkbenchPage', () => {
         referenced_fields: ['区域', '日期'],
       }],
     }
+    const user = userEvent.setup()
 
-    const firstRender = renderPage()
+    renderSwitchablePage()
     expect(screen.getByText('AI 推荐')).toBeInTheDocument()
     expect(screen.getByText('课程组合比较')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '使用课程组合比较推荐' }))
+    expect(screen.getByLabelText('输入分析问题')).toHaveValue('比较课程类别与完成率。')
 
-    firstRender.unmount()
-    renderPage('/datasets/file-2/analysis')
+    await user.click(screen.getByRole('button', { name: '切换到数据集 file-2' }))
 
+    expect(screen.getByLabelText('输入分析问题')).toHaveValue('')
     expect(screen.getByText('字段模板')).toBeInTheDocument()
     expect(screen.getByText('区域月度变化')).toBeInTheDocument()
     expect(screen.queryByText('课程组合比较')).not.toBeInTheDocument()

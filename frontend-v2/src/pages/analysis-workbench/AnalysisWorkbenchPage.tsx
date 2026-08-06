@@ -165,6 +165,7 @@ export function AnalysisWorkbenchPage() {
   const [streamNotice, setStreamNotice] = useState<{ runId: string; message: string } | null>(null)
   const [pendingSubmission, setPendingSubmission] = useState<{ question: string; key: string } | null>(null)
   const [eventState, setEventState] = useState(() => createRunEventState(runId))
+  const previousDatasetId = useRef(fileId)
   const streamRunRef = useRef('')
   const refetchRun = run.refetch
   const refetchSteps = steps.refetch
@@ -172,6 +173,13 @@ export function AnalysisWorkbenchPage() {
   const refetchConversation = conversation.refetch
   const streamRunStatus = run.data?.status
   const streamRunSequence = run.data?.last_event_sequence ?? 0
+
+  useEffect(() => {
+    if (previousDatasetId.current === fileId) return
+    previousDatasetId.current = fileId
+    setQuestion('')
+    setPendingSubmission(null)
+  }, [fileId])
 
   useEffect(() => {
     if (!runId || !isActive(streamRunStatus)) return
