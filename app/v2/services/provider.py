@@ -14,7 +14,11 @@ from app.v2.schemas.analysis import (
     PlanStepDraft,
     model_tool_catalog,
 )
-from app.v2.schemas.intents import DomainIntent
+from app.v2.schemas.intents import AnalysisIntent, DomainIntent, IntentMetric
+from app.v2.schemas.recommendations import (
+    RecommendationCandidate,
+    RecommendationGeneration,
+)
 from app.v2.schemas.conclusions import (
     ConclusionFinding,
     ConclusionRecommendation,
@@ -25,6 +29,7 @@ from app.v2.services.evidence import (
     EvidenceAliasMap,
     EvidenceRegistry,
 )
+from app.v2.services.plan_compiler import PlanCompilationError, PlanCompiler
 from app.v2.services.structured_response import (
     StructuredResponseError,
     StructuredResponseParser,
@@ -60,6 +65,17 @@ DOMAIN_INTENT_EXAMPLES = [
             "paid_amount",
             "completion_rate",
         ],
+    },
+]
+
+RECOMMENDATION_INTENT_CONTRACTS = [
+    {
+        "intent_type": "group_comparison",
+        "description": "Compare fields across groups without calculating values.",
+    },
+    {
+        "intent_type": "monthly_trend",
+        "description": "Describe month-by-month trends without calculating values.",
     },
 ]
 
@@ -100,6 +116,10 @@ class AnalysisProvider(Protocol):
     def set_history(self, history: list[dict[str, str]]) -> None: ...
 
     def build_plan(self, question: str, file_record: FileModel) -> ProviderPlan: ...
+
+    def recommend_questions(
+        self, file_record: FileModel
+    ) -> RecommendationGeneration: ...
 
     def before_step(self) -> None: ...
 
@@ -158,6 +178,11 @@ class FakeAnalysisProvider:
                 ),
             ),
         )
+
+    def recommend_questions(
+        self, file_record: FileModel
+    ) -> RecommendationGeneration:
+        return RecommendationGeneration(candidates=[])
 
     def before_step(self) -> None:
         if self.step_delay_seconds:
@@ -339,6 +364,46 @@ class DeepSeekProvider:
             ),
         )
 
+    def recommend_questions(
+        self, file_record: FileModel
+    ) -> RecommendationGeneration:
+        self._require_config()
+        payload = {
+            "dataset": self._safe_dataset_profile(file_record),
+            "allowed_intent_contracts": RECOMMENDATION_INTENT_CONTRACTS,
+        }
+        content = self._chat(
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        "Return only one JSON object with a candidates array. "
+                        "Each candidate must contain intent_type, label, question, "
+                        "and referenced_fields. Do not calculate values or add keys."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": self._bounded_json(payload),
+                },
+            ],
+            temperature=0,
+            json_output=True,
+            max_tokens=1000,
+        )
+        try:
+            generation = RecommendationGeneration.model_validate(
+                self._structured_parser.parse_object(content)
+            )
+            self._validate_recommendation_candidates(generation, file_record)
+        except (PlanCompilationError, StructuredResponseError, ValidationError) as exc:
+            raise ProviderError(
+                "PROVIDER_INVALID_RESPONSE",
+                "Analysis service returned invalid recommended questions.",
+                retryable=False,
+            ) from exc
+        return generation
+
     def generate_intent(
         self,
         question: str,
@@ -439,6 +504,59 @@ class DeepSeekProvider:
                         "intent_diagnostics": self.last_intent_diagnostics,
                     },
                 ) from exc
+
+    @staticmethod
+    def _validate_recommendation_candidates(
+        generation: RecommendationGeneration,
+        file_record: FileModel,
+    ) -> None:
+        available_fields = {
+            str(item.get("name")) for item in (file_record.columns_info or [])
+        }
+        compiler = PlanCompiler()
+        for candidate in generation.candidates:
+            if any(
+                field not in available_fields
+                for field in candidate.referenced_fields
+            ):
+                raise PlanCompilationError(
+                    "FIELD_NOT_FOUND",
+                    "Recommended question references an unavailable field.",
+                )
+            compiler.compile(
+                DeepSeekProvider._recommendation_validation_intent(candidate),
+                file_record,
+            )
+
+    @staticmethod
+    def _recommendation_validation_intent(
+        candidate: RecommendationCandidate,
+    ) -> AnalysisIntent:
+        fields = candidate.referenced_fields
+        if candidate.intent_type == "monthly_trend":
+            return AnalysisIntent(
+                analysis_type="monthly_trend",
+                dimensions=[fields[0]],
+                date_field=fields[-1],
+                metrics=[
+                    IntentMetric(
+                        semantic="报名人数",
+                        source_field=None,
+                        aggregation="count",
+                    )
+                ],
+            )
+        return AnalysisIntent(
+            analysis_type="group_comparison",
+            dimensions=[fields[0]],
+            metrics=[
+                IntentMetric(
+                    semantic="报名人数",
+                    source_field=None,
+                    aggregation="count",
+                )
+            ],
+        )
 
     def _validate_intent_response(self, content: str) -> DomainIntent:
         return DOMAIN_INTENT_ADAPTER.validate_python(
