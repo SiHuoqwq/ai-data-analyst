@@ -26,8 +26,8 @@ export function WorkspacePage() {
     try { await remove.mutateAsync(selected.id); setSelected(null) } catch { /* mutation state renders below */ }
   }
   return <div className="page">
-    <PageHeader eyebrow="数据工作区" title="从数据开始，先看清，再分析" description="上传表格，检查字段与数据质量，然后进入 AI 分析入口。" />
-    <p className="capability-line">字段质量检查 · 数据预览 · 趋势分析 · 异常识别</p>
+    <PageHeader eyebrow="数据工作区" title="从数据开始，先看清，再分析" description="上传课程运营表格，检查字段与数据质量，再进行受控分析。" />
+    <p className="capability-line">字段质量检查 · 课程组合比较 · 课程月度趋势</p>
     <Card className="upload-card"><FileUploadZone busy={upload.isPending} onUpload={uploadFile} /></Card>
     <section className="section-block">
       <div className="section-heading"><div><span className="eyebrow">最近数据集</span><h2>你的数据</h2></div>{datasets.data && <span>{datasets.data.length} 个数据集</span>}</div>

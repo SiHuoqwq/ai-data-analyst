@@ -161,6 +161,26 @@ describe('AnalysisWorkbenchPage', () => {
     expect(screen.queryByText(/测试分析模式/)).not.toBeInTheDocument()
   })
 
+  it('fills both controlled example questions without submitting them', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    const input = screen.getByLabelText('输入分析问题')
+
+    await user.click(screen.getByRole('button', { name: '使用课程组合比较示例' }))
+    expect(input).toHaveValue(
+      '请分析不同课程类别、课程难度、购买渠道和主要学习设备对课程完成率、退款率及课程评分的影响。找出报名人数较多但完成率偏低的组合，并用表格和图表展示关键结论，再给出运营建议。',
+    )
+    expect(createConversation).not.toHaveBeenCalled()
+    expect(createRun).not.toHaveBeenCalled()
+
+    await user.click(screen.getByRole('button', { name: '使用月度趋势分析示例' }))
+    expect(input).toHaveValue(
+      '请按月份统计各课程类别的报名人数、实付金额和平均完成率趋势，识别增长最快、下滑最明显或波动异常的课程类别，并生成趋势图。',
+    )
+    expect(createConversation).not.toHaveBeenCalled()
+    expect(createRun).not.toHaveBeenCalled()
+  })
+
   it('creates a conversation only on the first real submission, then creates a run', async () => {
     const user = userEvent.setup()
     renderPage()

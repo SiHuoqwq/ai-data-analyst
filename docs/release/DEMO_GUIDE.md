@@ -10,6 +10,14 @@
 
 演示数据必须匿名，不提交用户真实 Excel、数据库、图表或密钥。
 
+仓库内的推荐数据为 `demo/learning_operations_demo.csv`。该文件完全由
+`demo/generate_learning_operations_demo.py` 生成，不对应任何真实个人、
+机构或业务，允许随项目公开。需要重建时运行：
+
+```powershell
+python demo/generate_learning_operations_demo.py
+```
+
 ## 无密钥演示
 
 配置：
@@ -20,9 +28,9 @@ V2_PROVIDER=fake
 
 流程：
 
-1. 运行 `start.bat`，展示迁移步骤成功后后端才启动。
-2. 启动 `frontend-v2`。
-3. 上传匿名 CSV/XLSX。
+1. 运行 `.\start-demo.ps1`，确认输出 Provider 为 Fake。
+2. 打开 `http://localhost:5174`，确认顶部显示“Fake / 确定性演示/测试模式”。
+3. 上传 `demo/learning_operations_demo.csv`。
 4. 查看数据集行列数、字段信息、缺失值和前 20 行预览。
 5. 进入分析工作台并提交“请生成数据预览表和概览图”。
 6. 打开执行详情，展示真实 RunStep。
@@ -32,6 +40,10 @@ V2_PROVIDER=fake
 
 Fake Provider 的作用是稳定验证产品闭环。它不会真正理解任意业务问题，
 演示时不要把固定测试结果描述成模型分析结论。
+
+页面提供的“课程组合比较”和“月度趋势分析”快捷问题只填入输入框，不会
+自动提交。Fake 模式下提交它们仍执行固定概览链路；它们主要用于后续受控
+DeepSeek 验收。
 
 ## 可选的真实领域分析
 
@@ -120,6 +132,7 @@ npm run build
 - 确认 `.env` 未被 Git 跟踪；
 - 确认使用匿名数据；
 - 确认 `V2_PROVIDER=fake`，除非明确进行受控真实演示；
+- 确认页面顶部 Provider 标识与 `/health` 一致；
 - 确认页面没有显示绝对路径、Prompt、堆栈或密钥；
 - 确认图表 URL 通过 HTTP 访问；
 - 确认 390×844 和 1440×900 无页面级横向溢出。

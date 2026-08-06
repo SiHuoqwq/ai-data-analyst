@@ -47,6 +47,27 @@ app.add_exception_handler(RequestValidationError, validation_error_handler)
 app.mount("/storage/charts", StaticFiles(directory=settings.chart_dir), name="charts")
 
 
+def _public_provider_status() -> dict[str, str]:
+    mode = settings.v2_provider.strip().lower()
+    if mode == "fake":
+        return {
+            "mode": "fake",
+            "display_name": "Fake",
+            "description": "确定性演示/测试模式",
+        }
+    if mode == "deepseek":
+        return {
+            "mode": "deepseek",
+            "display_name": "DeepSeek",
+            "description": "真实模型模式",
+        }
+    return {
+        "mode": "unknown",
+        "display_name": "Provider 未知",
+        "description": "Provider 配置异常",
+    }
+
+
 def _migration_error(
     status: DatabaseRevisionStatus,
 ) -> V2APIError:
@@ -96,11 +117,13 @@ def health():
             status_code=error.status_code,
             content={
                 "status": "degraded",
+                "provider": _public_provider_status(),
                 **error_body(error),
             },
         )
     return {
         "status": "ok",
+        "provider": _public_provider_status(),
         "database": {
             "ready": True,
             "revisions": (

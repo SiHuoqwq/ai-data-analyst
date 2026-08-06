@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     chart_dir: str = "./storage/charts"
     backend_host: str = "127.0.0.1"
     backend_port: int = 8000
-    frontend_origin: str = "http://localhost:5173"
+    frontend_origin: str = "http://localhost:5174"
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

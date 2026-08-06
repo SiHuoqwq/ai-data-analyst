@@ -23,4 +23,13 @@ describe('analysis workbench narrow layout safeguards', () => {
       /@media \(max-width: 800px\)[\s\S]*?\.workbench-context h1 \{[^}]*white-space: normal;[^}]*overflow-wrap: anywhere;/,
     )
   })
+
+  it('stacks example questions and compacts provider status on narrow screens', () => {
+    expect(css).toMatch(
+      /@media \(max-width: 800px\)[\s\S]*?\.provider-status > span \{[^}]*display: none;/,
+    )
+    expect(css).toMatch(
+      /@media \(max-width: 480px\)[\s\S]*?\.example-questions \{[^}]*grid-template-columns: minmax\(0,1fr\);/,
+    )
+  })
 })

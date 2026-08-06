@@ -20,6 +20,7 @@ import { MarkdownContent } from '../../components/feedback/MarkdownContent'
 import { Button } from '../../components/ui/Button'
 import { useDataset } from '../../features/datasets/queries'
 import { ArtifactView } from '../../features/analysis/ArtifactView'
+import { ANALYSIS_EXAMPLE_QUESTIONS } from '../../features/analysis/example-questions'
 import {
   useAnalysisRun,
   useAnalysisRunArtifacts,
@@ -347,7 +348,21 @@ export function AnalysisWorkbenchPage() {
       {!runId && <section className="analysis-welcome">
         <div><span>01</span><ChevronRight /></div>
         <h2>从一个明确的问题开始</h2>
-        <p>例如：哪些字段最值得关注？数据中是否存在明显分组差异？</p>
+        <p>当前支持课程组合比较和课程月度趋势。选择示例只会填入输入框，由你确认后再开始分析。</p>
+        <div className="example-questions" aria-label="支持的分析示例">
+          {ANALYSIS_EXAMPLE_QUESTIONS.map((example) => <button
+            type="button"
+            key={example.id}
+            aria-label={`使用${example.label}示例`}
+            onClick={() => {
+              setQuestion(example.question)
+              setPendingSubmission(null)
+            }}
+          >
+            <strong>{example.label}</strong>
+            <span>{example.question}</span>
+          </button>)}
+        </div>
       </section>}
 
       {runId && <section className="active-analysis" aria-labelledby="current-analysis-heading">
@@ -410,7 +425,7 @@ export function AnalysisWorkbenchPage() {
             if (pendingSubmission?.question !== event.target.value.trim()) setPendingSubmission(null)
           }}
           onKeyDown={handleInputKey}
-          placeholder="输入你想了解的数据问题…"
+          placeholder="输入课程组合比较或月度趋势问题…"
           rows={3}
           disabled={busy}
         />

@@ -32,6 +32,39 @@ FRONTEND_ORIGIN=http://localhost:5174
 
 ## Windows 启动
 
+完整演示环境推荐使用：
+
+```powershell
+.\start-demo.ps1
+```
+
+它检查 Python、npm 和前端依赖，默认强制使用 Fake Provider，显式执行
+数据库迁移，然后启动 8000 后端和 5174 正式前端。运行数据库、上传文件、
+图表、日志和进程状态均位于 `$env:TEMP\xishu-demo-runtime`，不会写入 Git。
+
+停止脚本只处理由当前项目状态文件记录的进程树：
+
+```powershell
+.\stop-demo.ps1
+```
+
+检查环境但不迁移、不启动服务：
+
+```powershell
+.\start-demo.ps1 -CheckOnly
+```
+
+未来受控真实模型验收必须显式选择 Provider，并预先设置本地环境变量：
+
+```powershell
+$env:DEEPSEEK_API_KEY = "<local-secret>"
+.\start-demo.ps1 -Provider DeepSeek
+```
+
+脚本不会写入或输出 API Key。缺失 Key 时会在迁移和启动前停止。
+
+现有后端单独启动脚本仍可使用：
+
 ```powershell
 .\start.bat
 ```

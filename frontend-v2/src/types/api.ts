@@ -43,4 +43,9 @@ export interface ConversationItem {
 
 export interface HealthResponse {
   status: string
+  provider: {
+    mode: string
+    display_name: string
+    description: string
+  }
 }

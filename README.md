@@ -5,7 +5,7 @@
 高层分析意图；字段映射、聚合规则、图表规划和业务数字均由服务端的
 确定性流程完成。
 
-当前发布候选版同时保留 `/api/v1` 兼容能力，并提供完整的 `/api/v2`
+当前 `v2.0.0` 同时保留 `/api/v1` 兼容能力，并提供完整的 `/api/v2`
 分析闭环、SSE 事件、结构化 Artifact、会话持久化和刷新恢复。
 
 ## 项目亮点
@@ -130,6 +130,25 @@ npm run dev
 
 打开 `http://localhost:5174`。
 
+### Windows 演示启动
+
+已安装依赖后，可以在一个 PowerShell 窗口完成迁移并启动正式前后端：
+
+```powershell
+.\start-demo.ps1
+```
+
+脚本默认强制使用 Fake Provider，运行数据写入仓库外的
+`$env:TEMP\xishu-demo-runtime`。页面顶部会根据后端 `/health` 显示当前
+Provider。演示结束后运行：
+
+```powershell
+.\stop-demo.ps1
+```
+
+只有显式执行 `.\start-demo.ps1 -Provider DeepSeek` 才会选择真实模型；
+脚本要求 `DEEPSEEK_API_KEY` 已存在于当前环境，但不会打印密钥。
+
 ## 数据库迁移安全
 
 - FastAPI 启动只检查 Alembic revision，不自动迁移。
@@ -166,6 +185,16 @@ npm run build
 DeepSeek。
 
 ## 演示
+
+仓库提供一份允许公开的完全合成课程运营数据：
+
+```powershell
+python demo/generate_learning_operations_demo.py
+```
+
+生成结果为 `demo/learning_operations_demo.csv`。它固定为 360 行、9 列、
+覆盖 18 个月，不包含任何真实个人或机构数据。字段和预设趋势见
+[demo/README.md](demo/README.md)。
 
 无密钥演示使用 Fake Provider，可验证上传、会话、Run、SSE、Artifact、
 取消和刷新恢复。Fake Provider 不解释任意业务问题，它只产生稳定的测试

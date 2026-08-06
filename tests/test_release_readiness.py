@@ -7,10 +7,54 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from app.db import database
+from app.config import Settings, settings
 from app.main import app
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_health_exposes_only_public_fake_provider_status(monkeypatch):
+    monkeypatch.setattr(settings, "v2_provider", "fake")
+
+    with TestClient(app) as client:
+        app.state.database_revision_status = None
+        response = client.get("/health")
+
+    assert response.status_code == 200
+    assert response.json()["provider"] == {
+        "mode": "fake",
+        "display_name": "Fake",
+        "description": "确定性演示/测试模式",
+    }
+    serialized = response.text.lower()
+    assert "api_key" not in serialized
+    assert "base_url" not in serialized
+    assert "prompt" not in serialized
+
+
+def test_health_exposes_deepseek_or_unknown_provider_without_secrets(
+    monkeypatch,
+):
+    with TestClient(app) as client:
+        app.state.database_revision_status = None
+
+        monkeypatch.setattr(settings, "v2_provider", "deepseek")
+        deepseek = client.get("/health").json()["provider"]
+
+        monkeypatch.setattr(settings, "v2_provider", "unconfigured-value")
+        unknown = client.get("/health").json()["provider"]
+
+    assert deepseek == {
+        "mode": "deepseek",
+        "display_name": "DeepSeek",
+        "description": "真实模型模式",
+    }
+    assert unknown == {
+        "mode": "unknown",
+        "display_name": "Provider 未知",
+        "description": "Provider 配置异常",
+    }
 
 
 def test_unmigrated_database_reports_clear_readiness_error(tmp_path):
@@ -130,3 +174,11 @@ def test_example_environment_matches_frontend_v2_development_port():
     assert "FRONTEND_ORIGIN=http://localhost:5174" in content
     assert "V2_PROVIDER=fake" in content
     assert "port: 5174" in vite_config
+
+
+def test_application_default_origin_matches_frontend_v2_port(monkeypatch):
+    monkeypatch.delenv("FRONTEND_ORIGIN", raising=False)
+
+    defaults = Settings(_env_file=None)
+
+    assert defaults.frontend_origin == "http://localhost:5174"
