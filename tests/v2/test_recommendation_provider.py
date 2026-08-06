@@ -83,6 +83,7 @@ def test_deepseek_returns_two_valid_recommendations_from_mocked_json(tmp_path):
     )
     record = file_record()
     record.filepath = str(csv_path)
+    record.columns_info[1]["dtype"] = "object"
     provider = provider_with(
         lambda _request: response(
             json.dumps(
@@ -121,6 +122,63 @@ def test_deepseek_returns_two_valid_recommendations_from_mocked_json(tmp_path):
     assert result.candidates[0].referenced_fields == [
         "course_category",
         "completion_rate",
+    ]
+
+
+def test_deepseek_accepts_monthly_recommendation_with_integer_category_code(
+    tmp_path,
+):
+    csv_path = tmp_path / "encoded-category.csv"
+    csv_path.write_text(
+        "course_category_code,enrollment_date\n"
+        "1,2026-01-01\n"
+        "2,2026-02-01\n",
+        encoding="utf-8",
+    )
+    record = file_record()
+    record.filepath = str(csv_path)
+    record.col_count = 2
+    record.columns_info = [
+        {
+            "name": "course_category_code",
+            "dtype": "int64",
+            "null_count": 0,
+            "null_rate": 0,
+            "unique_count": 2,
+        },
+        {
+            "name": "enrollment_date",
+            "dtype": "object",
+            "null_count": 0,
+            "null_rate": 0,
+            "unique_count": 2,
+        },
+    ]
+    provider = provider_with(
+        lambda _request: response(
+            json.dumps(
+                {
+                    "candidates": [
+                        {
+                            "intent_type": "monthly_trend",
+                            "label": "Monthly category trend",
+                            "question": "How do encoded course categories change by month?",
+                            "referenced_fields": [
+                                "course_category_code",
+                                "enrollment_date",
+                            ],
+                        }
+                    ]
+                }
+            )
+        )
+    )
+
+    result = provider.recommend_questions(record)
+
+    assert result.candidates[0].referenced_fields == [
+        "course_category_code",
+        "enrollment_date",
     ]
 
 

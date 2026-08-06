@@ -9,6 +9,7 @@ import httpx
 from pydantic import TypeAdapter, ValidationError
 
 from app.db.models import FileModel
+from app.services.parser import parse_file
 from app.v2.schemas.analysis import (
     ModelPlanDraft,
     PlanStepDraft,
@@ -29,7 +30,11 @@ from app.v2.services.evidence import (
     EvidenceAliasMap,
     EvidenceRegistry,
 )
-from app.v2.services.plan_compiler import PlanCompilationError, PlanCompiler
+from app.v2.services.plan_compiler import (
+    PlanCompilationError,
+    PlanCompiler,
+    PlanValidator,
+)
 from app.v2.services.structured_response import (
     StructuredResponseError,
     StructuredResponseParser,
@@ -513,7 +518,7 @@ class DeepSeekProvider:
         available_fields = {
             str(item.get("name")) for item in (file_record.columns_info or [])
         }
-        compiler = PlanCompiler()
+        parsed_frame = None
         for candidate in generation.candidates:
             if any(
                 field not in available_fields
@@ -523,51 +528,70 @@ class DeepSeekProvider:
                     "FIELD_NOT_FOUND",
                     "Recommended question references an unavailable field.",
                 )
-            plan = compiler.compile(
-                DeepSeekProvider._recommendation_validation_intent(
-                    candidate,
-                    file_record,
-                ),
-                file_record,
+            if candidate.intent_type == "monthly_trend" and parsed_frame is None:
+                try:
+                    parsed_frame = parse_file(file_record.filepath)
+                except Exception as exc:
+                    raise PlanCompilationError(
+                        "RECOMMENDATION_VALIDATION_FAILED",
+                        "Recommended question could not be validated.",
+                    ) from exc
+            compiler = (
+                PlanCompiler(
+                    validator=PlanValidator(
+                        dataframe_loader=lambda _path: parsed_frame
+                    )
+                )
+                if candidate.intent_type == "monthly_trend"
+                else PlanCompiler()
             )
-            compiler.validator.validate(plan, file_record)
+            for intent in DeepSeekProvider._recommendation_validation_intents(
+                candidate,
+                file_record,
+            ):
+                try:
+                    plan = compiler.compile(intent, file_record)
+                    compiler.validator.validate(plan, file_record)
+                except PlanCompilationError:
+                    continue
+                break
+            else:
+                raise PlanCompilationError(
+                    "INVALID_RECOMMENDATION_FIELDS",
+                    "Recommended question does not map to an executable workflow.",
+                )
 
     @staticmethod
-    def _recommendation_validation_intent(
+    def _recommendation_validation_intents(
         candidate: RecommendationCandidate,
         file_record: FileModel,
-    ) -> AnalysisIntent:
+    ) -> list[AnalysisIntent]:
         field_types = {
             str(item.get("name")): str(item.get("dtype", "")).lower()
             for item in (file_record.columns_info or [])
         }
-        date_fields = [
-            field
-            for field in candidate.referenced_fields
-            if "date" in field_types[field] or "time" in field_types[field]
-        ]
-        numeric_fields = [
-            field
-            for field in candidate.referenced_fields
-            if any(
-                marker in field_types[field]
-                for marker in ("int", "float", "decimal", "number", "bool")
-            )
-        ]
-        dimension_fields = [
-            field
-            for field in candidate.referenced_fields
-            if field not in date_fields and field not in numeric_fields
-        ]
+        fields = candidate.referenced_fields
 
-        def numeric_metrics() -> list[IntentMetric]:
+        def is_metric_field(field: str) -> bool:
+            return any(
+                marker in field_types[field]
+                for marker in ("float", "decimal", "number", "bool")
+            )
+
+        def is_numeric_code(field: str) -> bool:
+            return "int" in field_types[field]
+
+        def is_date_hint(field: str) -> bool:
+            return "date" in field_types[field] or "time" in field_types[field]
+
+        def numeric_metrics(metric_fields: list[str]) -> list[IntentMetric]:
             return [
                 IntentMetric(
                     semantic="平均完成率",
                     source_field=field,
                     aggregation="mean",
                 )
-                for field in numeric_fields
+                for field in metric_fields
             ] or [
                 IntentMetric(
                     semantic="报名人数",
@@ -577,27 +601,52 @@ class DeepSeekProvider:
             ]
 
         if candidate.intent_type == "monthly_trend":
-            if len(date_fields) != 1 or len(dimension_fields) != 1:
-                raise PlanCompilationError(
-                    "INVALID_RECOMMENDATION_FIELDS",
-                    "Monthly recommendations require one date and one category field.",
-                )
-            return AnalysisIntent(
-                analysis_type="monthly_trend",
-                dimensions=dimension_fields,
-                date_field=date_fields[0],
-                metrics=numeric_metrics(),
-            )
-        if not dimension_fields or date_fields:
+            intents = []
+            for date_field in fields:
+                if is_metric_field(date_field) or is_numeric_code(date_field):
+                    continue
+                for dimension_field in fields:
+                    if dimension_field == date_field or is_metric_field(
+                        dimension_field
+                    ) or is_date_hint(dimension_field):
+                        continue
+                    metric_fields = [
+                        field
+                        for field in fields
+                        if field not in {date_field, dimension_field}
+                    ]
+                    if len(metric_fields) > 3 or any(
+                        not is_metric_field(field) for field in metric_fields
+                    ):
+                        continue
+                    intents.append(
+                        AnalysisIntent(
+                            analysis_type="monthly_trend",
+                            dimensions=[dimension_field],
+                            date_field=date_field,
+                            metrics=numeric_metrics(metric_fields),
+                        )
+                    )
+            return intents
+
+        dimension_fields = [
+            field
+            for field in fields
+            if not is_metric_field(field) and not is_date_hint(field)
+        ]
+        metric_fields = [field for field in fields if is_metric_field(field)]
+        if not dimension_fields or len(dimension_fields) > 4:
             raise PlanCompilationError(
                 "INVALID_RECOMMENDATION_FIELDS",
-                "Group recommendations require category fields and no date fields.",
+                "Group recommendations require up to four category fields.",
             )
-        return AnalysisIntent(
-            analysis_type="group_comparison",
-            dimensions=dimension_fields,
-            metrics=numeric_metrics(),
-        )
+        return [
+            AnalysisIntent(
+                analysis_type="group_comparison",
+                dimensions=dimension_fields,
+                metrics=numeric_metrics(metric_fields),
+            )
+        ]
 
     def _validate_intent_response(self, content: str) -> DomainIntent:
         return DOMAIN_INTENT_ADAPTER.validate_python(
