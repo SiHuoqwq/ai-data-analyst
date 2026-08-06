@@ -10,6 +10,7 @@ from pydantic import TypeAdapter, ValidationError
 
 from app.db.models import FileModel
 from app.services.parser import parse_file
+from app.v2.domain.intent_router import ControlledIntentRouter
 from app.v2.schemas.analysis import (
     ModelPlanDraft,
     PlanStepDraft,
@@ -122,6 +123,10 @@ class AnalysisProvider(Protocol):
 
     def build_plan(self, question: str, file_record: FileModel) -> ProviderPlan: ...
 
+    def generate_intent(
+        self, question: str, file_record: FileModel
+    ) -> DomainIntent: ...
+
     def recommend_questions(
         self, file_record: FileModel
     ) -> RecommendationGeneration: ...
@@ -165,9 +170,27 @@ class FakeAnalysisProvider:
         self.last_intent_mode = "model"
         self.last_intent_diagnostics: list[dict[str, Any]] = []
         self._last_finish_reason: str | None = None
+        self._intent_router = ControlledIntentRouter()
 
     def set_history(self, history: list[dict[str, str]]) -> None:
         self.history = history
+
+    def generate_intent(
+        self,
+        question: str,
+        file_record: FileModel,
+    ) -> DomainIntent:
+        if question == "[fake:fail]":
+            raise RuntimeError("controlled fake provider failure")
+        decision = self._intent_router.route(question)
+        if decision.workflow == "unsupported":
+            raise ProviderError(
+                "FAKE_SAFE_PLAN_FALLBACK",
+                "Fake provider will use its deterministic safe plan.",
+                retryable=False,
+            )
+        self.last_intent_mode = "controlled_fallback"
+        return self._intent_router.default_intent(decision)
 
     def build_plan(self, question: str, file_record: FileModel) -> ProviderPlan:
         if question == "[fake:fail]":

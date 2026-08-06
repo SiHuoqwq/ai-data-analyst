@@ -24,6 +24,7 @@ class IntentRoutingDecision:
 
 class ControlledIntentRouter:
     monthly_signals = {
+        "change by month": 4,
         "按月": 4,
         "月份": 3,
         "月度": 3,
@@ -36,6 +37,7 @@ class ControlledIntentRouter:
         "随时间": 3,
     }
     group_signals = {
+        "key outcomes compare across": 3,
         "不同课程": 3,
         "不同类别": 3,
         "不同难度": 3,

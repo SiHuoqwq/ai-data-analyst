@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from app.db import database
 from app.db.models import FileModel, MessageModel
 from app.v2.db.models import (
@@ -11,7 +13,8 @@ from app.v2.db.models import (
 from app.v2.domain.intent_router import ControlledIntentRouter
 from app.v2.schemas.intents import GroupComparisonIntent
 from app.v2.services.executor import AnalysisExecutor
-from app.v2.services.provider import ProviderError
+from app.v2.services.provider import FakeAnalysisProvider, ProviderError
+from app.v2.services.recommendations import DatasetRecommendationService
 from app.v2.services.runs import AnalysisRunService
 
 
@@ -214,6 +217,75 @@ def test_controlled_fallback_completes_both_fixed_workflows(v2_runtime):
         for event in intent_events
         if event.payload_json.get("intent_mode")
     } == {"controlled_fallback"}
+    session.close()
+
+
+def test_fake_provider_executes_template_recommendations_as_compiled_workflows(
+    v2_runtime,
+):
+    _prepare_dataset(v2_runtime)
+    provider = FakeAnalysisProvider()
+    generated = DatasetRecommendationService().get_or_generate(
+        "file-1",
+        provider,
+    )
+
+    assert generated.source == "template"
+    assert {item["intent_type"] for item in generated.recommendations} == {
+        "group_comparison",
+        "monthly_trend",
+    }
+
+    service = AnalysisRunService()
+    runs = {}
+    for item in generated.recommendations:
+        run = service.create_run(
+            "conversation-1",
+            "file-1",
+            item["question"],
+            f"fake-template-{item['intent_type']}",
+        )
+        AnalysisExecutor(provider).execute(run.id)
+        runs[item["intent_type"]] = run
+
+    session = database.SessionLocal()
+    stored = {
+        intent_type: session.get(AnalysisRunModel, run.id)
+        for intent_type, run in runs.items()
+    }
+    assert {item.status for item in stored.values()} == {"completed"}
+    assert {
+        item.context_snapshot_json["intent_mode"]
+        for item in stored.values()
+    } == {"controlled_fallback"}
+    operations = {
+        intent_type: [
+            step.operation
+            for step in session.query(RunStepModel)
+            .filter_by(run_id=run.id)
+            .order_by(RunStepModel.sequence)
+            .all()
+        ]
+        for intent_type, run in runs.items()
+    }
+    assert "group_aggregate" in operations["group_comparison"]
+    assert "monthly_trend" in operations["monthly_trend"]
+    session.close()
+
+
+def test_fake_provider_marks_unsupported_questions_for_safe_plan_fallback(
+    v2_runtime,
+):
+    session = database.SessionLocal()
+    file_record = session.get(FileModel, "file-1")
+
+    with pytest.raises(ProviderError) as raised:
+        FakeAnalysisProvider().generate_intent(
+            "Please inspect this dataset.",
+            file_record,
+        )
+
+    assert raised.value.code == "FAKE_SAFE_PLAN_FALLBACK"
     session.close()
 
 

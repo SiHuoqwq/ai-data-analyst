@@ -32,8 +32,11 @@ def create_run(service: AnalysisRunService, key: str = "request-1"):
 def test_fake_provider_has_deterministic_failure_trigger(v2_runtime):
     session = database.SessionLocal()
     file_record = session.get(FileModel, "file-1")
+    provider = FakeAnalysisProvider()
     with pytest.raises(RuntimeError, match="controlled fake provider failure"):
-        FakeAnalysisProvider().build_plan("[fake:fail]", file_record)
+        provider.build_plan("[fake:fail]", file_record)
+    with pytest.raises(RuntimeError, match="controlled fake provider failure"):
+        provider.generate_intent("[fake:fail]", file_record)
     session.close()
 
 

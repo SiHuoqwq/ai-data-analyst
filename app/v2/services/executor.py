@@ -128,47 +128,51 @@ class AnalysisExecutor:
                         "model",
                     )
                 except ProviderError as intent_error:
-                    if intent_error.code != "INTENT_REPAIR_FAILED":
+                    if intent_error.code == "FAKE_SAFE_PLAN_FALLBACK":
+                        compiled_workflow = False
+                    elif intent_error.code != "INTENT_REPAIR_FAILED":
                         raise
-                    decision = self.intent_router.route(question)
-                    if decision.workflow == "unsupported":
-                        raise ProviderError(
-                            "UNSUPPORTED_ANALYSIS_INTENT",
-                            "当前问题不属于已支持的在线学习运营分析范围",
-                            retryable=False,
-                        ) from intent_error
-                    intent = self.intent_router.default_intent(decision)
-                    intent_mode = "controlled_fallback"
-                plan = self.plan_compiler.compile(intent, file_record)
-                self.plan_compiler.validator.validate(plan, file_record)
-                run.context_snapshot_json = {
-                    **(run.context_snapshot_json or {}),
-                    "intent_mode": intent_mode,
-                    "intent_diagnostics": list(
-                        getattr(
-                            self.provider,
-                            "last_intent_diagnostics",
-                            [],
-                        )
-                    ),
-                }
-                self.events.emit(
-                    session,
-                    run,
-                    "run.status",
-                    {
-                        "status": "running",
-                        "current_phase": "plan_generation",
-                        "progress": {
-                            "completed_steps": 0,
-                            "total_steps": None,
-                        },
-                        "summary": "已确定受控分析工作流",
+                    else:
+                        decision = self.intent_router.route(question)
+                        if decision.workflow == "unsupported":
+                            raise ProviderError(
+                                "UNSUPPORTED_ANALYSIS_INTENT",
+                                "当前问题不属于已支持的在线学习运营分析范围",
+                                retryable=False,
+                            ) from intent_error
+                        intent = self.intent_router.default_intent(decision)
+                        intent_mode = "controlled_fallback"
+                if compiled_workflow:
+                    plan = self.plan_compiler.compile(intent, file_record)
+                    self.plan_compiler.validator.validate(plan, file_record)
+                    run.context_snapshot_json = {
+                        **(run.context_snapshot_json or {}),
                         "intent_mode": intent_mode,
-                    },
-                )
-                session.commit()
-            else:
+                        "intent_diagnostics": list(
+                            getattr(
+                                self.provider,
+                                "last_intent_diagnostics",
+                                [],
+                            )
+                        ),
+                    }
+                    self.events.emit(
+                        session,
+                        run,
+                        "run.status",
+                        {
+                            "status": "running",
+                            "current_phase": "plan_generation",
+                            "progress": {
+                                "completed_steps": 0,
+                                "total_steps": None,
+                            },
+                            "summary": "已确定受控分析工作流",
+                            "intent_mode": intent_mode,
+                        },
+                    )
+                    session.commit()
+            if not compiled_workflow:
                 plan = self.provider.build_plan(question, file_record)
             expected_artifact_types: set[str] = set()
             structured_outputs = {
