@@ -38,6 +38,7 @@ class ControlledIntentRouter:
     }
     group_signals = {
         "key outcomes compare across": 3,
+        "关键指标表现有何差异": 3,
         "不同课程": 3,
         "不同类别": 3,
         "不同难度": 3,

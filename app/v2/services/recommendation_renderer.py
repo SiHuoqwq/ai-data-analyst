@@ -27,12 +27,12 @@ class DeterministicRecommendationRenderer:
         if candidate.intent_type == "monthly_trend":
             date = self._field_slot(intent.date_field or "date", file_record)
             return (
-                f"Monthly {dimension} trend",
-                f"How does {dimension} change by month using {date}?",
+                f"{dimension}月度趋势",
+                f"按{date}月份查看{dimension}的变化趋势",
             )
         return (
-            f"Compare by {dimension}",
-            f"How do key outcomes compare across {dimension}?",
+            f"按{dimension}比较",
+            f"不同{dimension}的关键指标表现有何差异？",
         )
 
     def _field_slot(self, field: str, file_record: FileModel) -> str:

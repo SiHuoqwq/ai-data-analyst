@@ -124,6 +124,14 @@ def test_router_selects_only_high_confidence_fixed_workflows():
     assert router.route("分析各课程类别随时间的收入变化").workflow == "monthly_trend"
     assert router.route("比较不同设备的退款表现").workflow == "group_comparison"
     assert router.route("找出高报名低完成的课程组合").workflow == "group_comparison"
+    assert (
+        router.route("不同课程类别的关键指标表现有何差异？").workflow
+        == "group_comparison"
+    )
+    assert (
+        router.route("不同field-1-edb2cd3b的关键指标表现有何差异？").workflow
+        == "group_comparison"
+    )
     assert router.route("请分析这份数据").workflow == "unsupported"
     assert (
         router.route("按月比较不同渠道的完成率趋势").workflow

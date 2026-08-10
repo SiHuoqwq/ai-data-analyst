@@ -280,7 +280,7 @@ describe('AnalysisWorkbenchPage', () => {
     renderPage()
 
     expect(screen.getByText('推荐问题暂时不可用')).toBeInTheDocument()
-    expect(screen.getByLabelText('输入分析问题')).toBeEnabled()
+    expect(screen.getByPlaceholderText('你想从这份数据中了解什么？')).toBeEnabled()
   })
 
   it('fills a dataset recommendation without submitting it', async () => {

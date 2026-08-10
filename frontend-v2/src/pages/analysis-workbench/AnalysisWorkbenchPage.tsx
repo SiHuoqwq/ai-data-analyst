@@ -459,7 +459,7 @@ export function AnalysisWorkbenchPage() {
             if (pendingSubmission?.question !== event.target.value.trim()) setPendingSubmission(null)
           }}
           onKeyDown={handleInputKey}
-          placeholder="输入课程组合比较或月度趋势问题…"
+          placeholder="你想从这份数据中了解什么？"
           rows={3}
           disabled={busy}
         />

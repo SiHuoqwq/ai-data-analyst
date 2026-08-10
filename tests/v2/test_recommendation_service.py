@@ -240,6 +240,14 @@ def test_cache_miss_validates_and_persists_one_model_candidate_per_intent(
         "group_comparison",
         "monthly_trend",
     ]
+    assert result.recommendations[0]["label"] == "按field-1-edb2cd3b比较"
+    assert result.recommendations[0]["question"] == (
+        "不同field-1-edb2cd3b的关键指标表现有何差异？"
+    )
+    assert result.recommendations[1]["label"] == "field-1-edb2cd3b月度趋势"
+    assert result.recommendations[1]["question"] == (
+        "按field-2-8166447c月份查看field-1-edb2cd3b的变化趋势"
+    )
     assert provider.calls == 1
     session = database.SessionLocal()
     try:
@@ -506,9 +514,9 @@ def test_model_selection_uses_server_owned_public_copy(
     recommendation = result.recommendations[0]
     assert recommendation["id"].startswith("group_comparison-")
     assert recommendation["intent_type"] == "group_comparison"
-    assert recommendation["label"] == "Compare by field-1-edb2cd3b"
+    assert recommendation["label"] == "按field-1-edb2cd3b比较"
     assert recommendation["question"] == (
-        "How do key outcomes compare across field-1-edb2cd3b?"
+        "不同field-1-edb2cd3b的关键指标表现有何差异？"
     )
     assert recommendation["referenced_fields"] == [
         "category",
@@ -670,7 +678,7 @@ def test_legitimate_chinese_recommendation_and_public_fields_remain_usable(
 
     assert result.source == "model"
     assert result.recommendations[0]["question"] == (
-        "How do key outcomes compare across 课程类别?"
+        "不同课程类别的关键指标表现有何差异？"
     )
     assert result.recommendations[0]["referenced_fields"] == [
         "课程类别",
@@ -719,10 +727,10 @@ def test_server_rendered_copy_changes_with_different_safe_field_profiles(
     channel_result = service.get_or_generate("dataset-channel", channel)
 
     assert region_result.recommendations[0]["question"] == (
-        "How do key outcomes compare across field-1-c697d298?"
+        "不同field-1-c697d298的关键指标表现有何差异？"
     )
     assert channel_result.recommendations[0]["question"] == (
-        "How do key outcomes compare across field-1-69e36568?"
+        "不同field-1-69e36568的关键指标表现有何差异？"
     )
     assert region_result.recommendations != channel_result.recommendations
 
@@ -763,7 +771,7 @@ def test_valid_sibling_survives_invalid_model_candidate(
     assert [item["intent_type"] for item in result.recommendations] == [
         "group_comparison"
     ]
-    assert result.recommendations[0]["label"] == "Compare by field-1-edb2cd3b"
+    assert result.recommendations[0]["label"] == "按field-1-edb2cd3b比较"
 
 
 def test_fake_provider_skips_model_candidates_and_uses_templates(
@@ -784,7 +792,7 @@ def test_fake_provider_skips_model_candidates_and_uses_templates(
     assert result.source == "template"
     assert fake.calls == 0
     assert result.recommendations[0]["question"] == (
-        "How do key outcomes compare across field-1-edb2cd3b?"
+        "不同field-1-edb2cd3b的关键指标表现有何差异？"
     )
 
     session = database.SessionLocal()
