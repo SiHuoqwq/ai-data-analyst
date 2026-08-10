@@ -1,3 +1,5 @@
+import hashlib
+import json
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -18,8 +20,10 @@ from app.v2.schemas.recommendations import (
 from app.v2.schemas.intents import AnalysisIntent
 from app.v2.services.plan_compiler import PlanCompilationError
 from app.v2.services.recommendation_intents import validated_recommendation_intent
+from app.v2.services.recommendation_renderer import (
+    DeterministicRecommendationRenderer,
+)
 from app.v2.services.recommendation_safety import (
-    contains_unsafe_recommendation_content,
     is_public_field_name,
     public_column_metadata,
 )
@@ -33,6 +37,7 @@ class _DatasetLockEntry:
 
 _PROCESS_SINGLE_FLIGHT_GUARD = Lock()
 _PROCESS_DATASET_LOCKS: dict[str, _DatasetLockEntry] = {}
+_CACHE_CONFLICT_RECOVERY_ATTEMPTS = 2
 
 
 @dataclass(frozen=True)
@@ -41,6 +46,12 @@ class RecommendationResult:
     recommendations: list[dict[str, Any]]
     source: str
     generated_at: Any
+
+
+@dataclass(frozen=True)
+class _ValidatedRecommendation:
+    candidate: RecommendationCandidate
+    intent: AnalysisIntent
 
 
 class RecommendationServiceError(RuntimeError):
@@ -65,9 +76,13 @@ class DatasetRecommendationService:
         self,
         session_factory: Callable = SessionLocal,
         registry: LearningDomainRegistry | None = None,
+        renderer: DeterministicRecommendationRenderer | None = None,
     ):
         self.session_factory = session_factory
         self.registry = registry or LearningDomainRegistry()
+        self.renderer = renderer or DeterministicRecommendationRenderer(
+            self.registry
+        )
 
     def get_or_generate(
         self,
@@ -102,64 +117,130 @@ class DatasetRecommendationService:
                 .filter_by(dataset_version_id=dataset_version_id)
                 .first()
             )
-            if cached and self._cache_matches(
-                cached, provider_name, provider_model
-            ):
-                return self._result_from_model(cached)
-
             file_record = session.get(FileModel, dataset_version_id)
             if not file_record:
                 raise RecommendationServiceError(
                     "DATASET_NOT_FOUND", "Dataset does not exist.", 404
                 )
-
-            accepted = (
-                []
-                if provider_name == "fake"
-                else self._model_recommendations(file_record, provider)
-            )
-            source = "model" if accepted else "template"
-            if not accepted:
-                accepted = self._template_recommendations(file_record)
+            if cached and self._cache_matches(
+                cached, provider_name, provider_model
+            ):
+                canonical = self._canonical_cached_recommendations(
+                    cached,
+                    file_record,
+                )
+                if canonical is not None:
+                    if cached.recommendations_json != canonical:
+                        cached.recommendations_json = canonical
+                        cached.updated_at = utc_now()
+                        session.commit()
+                        session.refresh(cached)
+                    return self._result_from_model(cached, canonical)
 
             now = utc_now()
             row = cached or DatasetRecommendationModel(
                 id=str(uuid.uuid4()),
                 dataset_version_id=dataset_version_id,
             )
-            row.recommendations_json = accepted
-            row.source = source
             row.provider_name = provider_name
             row.provider_model = provider_model
             row.created_at = now
             row.updated_at = now
+            accepted = (
+                []
+                if provider_name == "fake"
+                else self._model_recommendations(file_record, provider, row)
+            )
+            source = "model" if accepted else "template"
+            if not accepted:
+                accepted = self._template_recommendations(file_record, row)
+
+            row.recommendations_json = accepted
+            row.source = source
             if cached is None:
                 session.add(row)
             try:
                 session.commit()
             except IntegrityError:
                 session.rollback()
-                winner = (
-                    session.query(DatasetRecommendationModel)
-                    .filter_by(dataset_version_id=dataset_version_id)
-                    .first()
-                )
-                if winner and self._cache_matches(
-                    winner, provider_name, provider_model
-                ):
-                    return self._result_from_model(winner)
-                raise RecommendationServiceError(
-                    "RECOMMENDATION_CACHE_CONFLICT",
-                    "Recommendation cache was updated by another provider.",
-                    503,
+                return self._reconcile_cache_conflict(
+                    session=session,
+                    dataset_version_id=dataset_version_id,
+                    file_record=file_record,
+                    provider_name=provider_name,
+                    provider_model=provider_model,
+                    accepted=accepted,
+                    source=source,
                 )
             session.refresh(row)
-            return self._result_from_model(row)
+            return self._result_from_model(row, accepted)
         except Exception:
             session.rollback()
             raise
         finally:
             session.close()
+
+    def _reconcile_cache_conflict(
+        self,
+        *,
+        session,
+        dataset_version_id: str,
+        file_record: FileModel,
+        provider_name: str,
+        provider_model: str | None,
+        accepted: list[dict[str, Any]],
+        source: str,
+    ) -> RecommendationResult:
+        for _attempt in range(_CACHE_CONFLICT_RECOVERY_ATTEMPTS):
+            winner = (
+                session.query(DatasetRecommendationModel)
+                .filter_by(dataset_version_id=dataset_version_id)
+                .first()
+            )
+            if winner is None:
+                continue
+            if not self._cache_matches(winner, provider_name, provider_model):
+                break
+
+            canonical = self._canonical_cached_recommendations(
+                winner,
+                file_record,
+            )
+            if canonical is not None:
+                return self._result_from_model(winner, canonical)
+
+            # The database winner is unusable, but this request already paid
+            # (if applicable) and produced a validated controlled selection.
+            # Replace the invalid generation in place and re-render it against
+            # the winner's new cache generation instead of calling the provider
+            # again. A second conflict is reread only within the fixed bound.
+            now = utc_now()
+            winner.provider_name = provider_name
+            winner.provider_model = provider_model
+            winner.source = source
+            winner.created_at = now
+            winner.updated_at = now
+            winner.recommendations_json = accepted
+            replacement = self._canonical_cached_recommendations(
+                winner,
+                file_record,
+            )
+            if replacement is None:
+                break
+            winner.recommendations_json = replacement
+            try:
+                session.commit()
+            except IntegrityError:
+                session.rollback()
+                continue
+            session.refresh(winner)
+            return self._result_from_model(winner, replacement)
+
+        raise RecommendationServiceError(
+            "RECOMMENDATION_CACHE_CONFLICT",
+            "Recommendation cache could not be reconciled safely.",
+            503,
+        )
 
     @staticmethod
     @contextmanager
@@ -210,7 +291,10 @@ class DatasetRecommendationService:
         )
 
     def _model_recommendations(
-        self, file_record: FileModel, provider
+        self,
+        file_record: FileModel,
+        provider,
+        row: DatasetRecommendationModel,
     ) -> list[dict[str, Any]]:
         try:
             generation = provider.recommend_questions(file_record)
@@ -220,24 +304,109 @@ class DatasetRecommendationService:
         accepted: list[dict[str, Any]] = []
         accepted_intents: set[str] = set()
         for candidate in candidates:
-            parsed = self._validated_candidate(candidate, file_record)
-            if parsed is None or parsed.intent_type in accepted_intents:
+            validated = self._validated_candidate(candidate, file_record)
+            if (
+                validated is None
+                or validated.candidate.intent_type in accepted_intents
+            ):
                 continue
-            accepted.append(self._public_candidate(parsed))
-            accepted_intents.add(parsed.intent_type)
+            accepted.append(self._public_candidate(validated, file_record, row))
+            accepted_intents.add(validated.candidate.intent_type)
         return accepted
 
+    def _canonical_cached_recommendations(
+        self,
+        row: DatasetRecommendationModel,
+        file_record: FileModel,
+    ) -> list[dict[str, Any]] | None:
+        if row.source == "template":
+            return self._template_recommendations(file_record, row)
+        if row.source != "model" or not isinstance(row.recommendations_json, list):
+            return None
+
+        accepted: list[dict[str, Any]] = []
+        accepted_intents: set[str] = set()
+        for cached_item in row.recommendations_json:
+            validated = self._validated_candidate(cached_item, file_record)
+            if (
+                validated is None
+                or validated.candidate.intent_type in accepted_intents
+            ):
+                continue
+            accepted.append(self._public_candidate(validated, file_record, row))
+            accepted_intents.add(validated.candidate.intent_type)
+        return accepted or None
+
+    def resolve_recommendation_intent(
+        self,
+        dataset_version_id: str,
+        provider: RecommendationProvider,
+        recommendation_id: str,
+        question: str,
+    ) -> AnalysisIntent:
+        provider_name, provider_model = self._provider_identity(provider)
+        with self._dataset_lock(dataset_version_id):
+            session = self.session_factory()
+            try:
+                file_record = session.get(FileModel, dataset_version_id)
+                row = (
+                    session.query(DatasetRecommendationModel)
+                    .filter_by(dataset_version_id=dataset_version_id)
+                    .first()
+                )
+                if (
+                    file_record is None
+                    or row is None
+                    or not self._cache_matches(
+                        row,
+                        provider_name,
+                        provider_model,
+                    )
+                ):
+                    raise self._invalid_selection()
+                canonical = self._canonical_cached_recommendations(
+                    row,
+                    file_record,
+                )
+                selected = next(
+                    (
+                        item
+                        for item in canonical or []
+                        if item["id"] == recommendation_id
+                    ),
+                    None,
+                )
+                if selected is None or selected["question"] != question:
+                    raise self._invalid_selection()
+                validated = self._validated_candidate(selected, file_record)
+                if validated is None:
+                    raise self._invalid_selection()
+                return validated.intent
+            finally:
+                session.close()
+
+    @staticmethod
+    def _invalid_selection() -> RecommendationServiceError:
+        return RecommendationServiceError(
+            "RECOMMENDATION_SELECTION_INVALID",
+            "Recommendation selection is no longer valid for this dataset.",
+            409,
+        )
+
     def _template_recommendations(
-        self, file_record: FileModel
+        self,
+        file_record: FileModel,
+        row: DatasetRecommendationModel,
     ) -> list[dict[str, Any]]:
         accepted: list[dict[str, Any]] = []
         for candidate in self._template_candidates(file_record):
-            parsed = self._validated_candidate(candidate, file_record)
-            if parsed is None or any(
-                item["intent_type"] == parsed.intent_type for item in accepted
+            validated = self._validated_candidate(candidate, file_record)
+            if validated is None or any(
+                item["intent_type"] == validated.candidate.intent_type
+                for item in accepted
             ):
                 continue
-            accepted.append(self._public_candidate(parsed))
+            accepted.append(self._public_candidate(validated, file_record, row))
         return accepted
 
     def resolve_template_intent(
@@ -259,22 +428,34 @@ class DatasetRecommendationService:
 
     def _validated_candidate(
         self, candidate: object, file_record: FileModel
-    ) -> RecommendationCandidate | None:
+    ) -> _ValidatedRecommendation | None:
         try:
-            parsed = RecommendationCandidate.model_validate(candidate)
+            controlled = {
+                "intent_type": (
+                    candidate.get("intent_type")
+                    if isinstance(candidate, dict)
+                    else getattr(candidate, "intent_type", None)
+                ),
+                "referenced_fields": (
+                    candidate.get("referenced_fields")
+                    if isinstance(candidate, dict)
+                    else getattr(candidate, "referenced_fields", None)
+                ),
+            }
+            parsed = RecommendationCandidate.model_validate(controlled)
+            if len(set(parsed.referenced_fields)) != len(parsed.referenced_fields):
+                return None
             available_fields = {
                 str(item.get("name"))
                 for item in public_column_metadata(file_record.columns_info or [])
             }
-            if contains_unsafe_recommendation_content(parsed, file_record):
-                return None
             if any(
                 field not in available_fields or not is_public_field_name(field)
                 for field in parsed.referenced_fields
             ):
                 return None
-            validated_recommendation_intent(parsed, file_record)
-            return parsed
+            intent = validated_recommendation_intent(parsed, file_record)
+            return _ValidatedRecommendation(parsed, intent)
         except (PlanCompilationError, ValidationError, TypeError, ValueError):
             return None
 
@@ -339,8 +520,6 @@ class DatasetRecommendationService:
             candidates.append(
                 RecommendationCandidate(
                     intent_type="group_comparison",
-                    label=f"Compare by {self._field_label(dimension)}",
-                    question=f"How do key outcomes compare across {self._field_label(dimension)}?",
                     referenced_fields=referenced_fields,
                 )
             )
@@ -355,11 +534,6 @@ class DatasetRecommendationService:
             candidates.append(
                 RecommendationCandidate(
                     intent_type="monthly_trend",
-                    label=f"Monthly {self._field_label(dimension)} trend",
-                    question=(
-                        f"How does {self._field_label(dimension)} change by month "
-                        f"using {self._field_label(date_field)}?"
-                    ),
                     referenced_fields=referenced_fields,
                 )
             )
@@ -378,35 +552,57 @@ class DatasetRecommendationService:
         preferred = [field for field in registry_fields if field in field_types]
         return list(dict.fromkeys([*preferred, *field_types]))
 
-    def _field_label(self, field: str) -> str:
-        for definition in self.registry.dimensions.values():
-            if definition.source_field == field:
-                return definition.label
-        for definition in self.registry.dates.values():
-            if definition.source_field == field:
-                return definition.label
-        for definition in self.registry.metrics.values():
-            if definition.source_field == field:
-                return definition.label
-        return field
-
     def _public_candidate(
         self,
-        candidate: RecommendationCandidate,
+        validated: _ValidatedRecommendation,
+        file_record: FileModel,
+        row: DatasetRecommendationModel,
     ) -> dict[str, Any]:
+        candidate = validated.candidate
+        label, question = self.renderer.render(
+            candidate,
+            validated.intent,
+            file_record,
+        )
         return {
-            "id": f"{candidate.intent_type}-1",
+            "id": self._recommendation_id(candidate, row),
             "intent_type": candidate.intent_type,
-            "label": candidate.label,
-            "question": candidate.question,
+            "label": label,
+            "question": question,
             "referenced_fields": list(candidate.referenced_fields),
         }
 
     @staticmethod
-    def _result_from_model(row: DatasetRecommendationModel) -> RecommendationResult:
+    def _recommendation_id(
+        candidate: RecommendationCandidate,
+        row: DatasetRecommendationModel,
+    ) -> str:
+        generation = as_utc(row.created_at).isoformat()
+        identity = json.dumps(
+            {
+                "dataset_version_id": row.dataset_version_id,
+                "cache_id": row.id,
+                "cache_generation": generation,
+                "provider_name": row.provider_name,
+                "provider_model": row.provider_model,
+                "intent_type": candidate.intent_type,
+                "referenced_fields": list(candidate.referenced_fields),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24]
+        return f"{candidate.intent_type}-{digest}"
+
+    @staticmethod
+    def _result_from_model(
+        row: DatasetRecommendationModel,
+        recommendations: list[dict[str, Any]],
+    ) -> RecommendationResult:
         return RecommendationResult(
             dataset_version_id=row.dataset_version_id,
-            recommendations=list(row.recommendations_json),
+            recommendations=list(recommendations),
             source=row.source,
             generated_at=as_utc(row.created_at),
         )

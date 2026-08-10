@@ -159,11 +159,16 @@ export function AnalysisWorkbenchPage() {
   const createRun = useCreateAnalysisRun()
   const cancelRun = useCancelAnalysisRun()
   const [question, setQuestion] = useState('')
+  const [selectedRecommendationId, setSelectedRecommendationId] = useState<string | null>(null)
   const [activeQuestion, setActiveQuestion] = useState('')
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [submittingError, setSubmittingError] = useState<unknown>(null)
   const [streamNotice, setStreamNotice] = useState<{ runId: string; message: string } | null>(null)
-  const [pendingSubmission, setPendingSubmission] = useState<{ question: string; key: string } | null>(null)
+  const [pendingSubmission, setPendingSubmission] = useState<{
+    question: string
+    key: string
+    recommendationId?: string
+  } | null>(null)
   const [eventState, setEventState] = useState(() => createRunEventState(runId))
   const previousDatasetId = useRef(fileId)
   const streamRunRef = useRef('')
@@ -178,6 +183,7 @@ export function AnalysisWorkbenchPage() {
     if (previousDatasetId.current === fileId) return
     previousDatasetId.current = fileId
     setQuestion('')
+    setSelectedRecommendationId(null)
     setPendingSubmission(null)
   }, [fileId])
 
@@ -270,9 +276,15 @@ export function AnalysisWorkbenchPage() {
     if (!trimmed || busy || conversationMismatch) return
     setSubmittingError(null)
     setActiveQuestion(trimmed)
+    const recommendationId = selectedRecommendationId ?? undefined
     const submission = pendingSubmission?.question === trimmed
+      && pendingSubmission.recommendationId === recommendationId
       ? pendingSubmission
-      : { question: trimmed, key: newSubmissionKey() }
+      : {
+          question: trimmed,
+          key: newSubmissionKey(),
+          recommendationId,
+        }
     setPendingSubmission(submission)
     try {
       let resolvedConversationId = conversationId
@@ -289,11 +301,15 @@ export function AnalysisWorkbenchPage() {
         input: {
           message: trimmed,
           dataset_version_id: fileId,
+          ...(submission.recommendationId
+            ? { recommendation_id: submission.recommendationId }
+            : {}),
           context: { include_message_ids: [], include_artifact_ids: [] },
         },
         idempotencyKey: submission.key,
       })
       setQuestion('')
+      setSelectedRecommendationId(null)
       setPendingSubmission(null)
       setSearchParams({
         conversationId: resolvedConversationId,
@@ -362,7 +378,7 @@ export function AnalysisWorkbenchPage() {
         {recommendations.isError && <p role="status">推荐问题暂时不可用</p>}
         {recommendations.data && <>
           <span className="eyebrow">
-            {recommendations.data.source === 'model' ? 'AI 推荐' : '字段模板'}
+            {recommendations.data.source === 'model' ? '模型选题' : '字段模板'}
           </span>
           <div className="example-questions" aria-label="数据集推荐问题">
             {recommendations.data.recommendations.map((recommendation) => <button
@@ -371,6 +387,7 @@ export function AnalysisWorkbenchPage() {
               aria-label={`使用${recommendation.label}推荐`}
               onClick={() => {
                 setQuestion(recommendation.question)
+                setSelectedRecommendationId(recommendation.id)
                 setPendingSubmission(null)
               }}
             >
@@ -438,6 +455,7 @@ export function AnalysisWorkbenchPage() {
           value={question}
           onChange={(event) => {
             setQuestion(event.target.value)
+            setSelectedRecommendationId(null)
             if (pendingSubmission?.question !== event.target.value.trim()) setPendingSubmission(null)
           }}
           onKeyDown={handleInputKey}

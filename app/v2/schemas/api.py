@@ -58,6 +58,7 @@ class RunContextRequest(APIModel):
 class CreateRunRequest(APIModel):
     message: str = Field(min_length=1, max_length=4000)
     dataset_version_id: str | None = None
+    recommendation_id: str | None = Field(default=None, min_length=1, max_length=100)
     confirm_version_switch: bool = False
     reply_to_message_id: str | None = None
     parent_run_id: str | None = None

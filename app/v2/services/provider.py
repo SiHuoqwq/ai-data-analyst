@@ -18,6 +18,7 @@ from app.v2.schemas.analysis import (
 from app.v2.schemas.intents import AnalysisIntent, DomainIntent
 from app.v2.schemas.recommendations import (
     RecommendationCandidate,
+    RecommendationEnvelope,
     RecommendationGeneration,
 )
 from app.v2.schemas.conclusions import (
@@ -86,6 +87,35 @@ RECOMMENDATION_INTENT_CONTRACTS = [
         "description": "Describe month-by-month trends without calculating values.",
     },
 ]
+
+RECOMMENDATION_SELECTION_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["candidates"],
+    "properties": {
+        "candidates": {
+            "type": "array",
+            "maxItems": 2,
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["intent_type", "referenced_fields"],
+                "properties": {
+                    "intent_type": {
+                        "type": "string",
+                        "enum": ["group_comparison", "monthly_trend"],
+                    },
+                    "referenced_fields": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 12,
+                        "items": {"type": "string"},
+                    },
+                },
+            },
+        }
+    },
+}
 
 
 class ProviderError(RuntimeError):
@@ -413,6 +443,7 @@ class DeepSeekProvider:
         payload = {
             "dataset": self._safe_dataset_profile(file_record),
             "allowed_intent_contracts": RECOMMENDATION_INTENT_CONTRACTS,
+            "selection_schema": RECOMMENDATION_SELECTION_SCHEMA,
         }
         content = self._chat(
             [
@@ -420,8 +451,9 @@ class DeepSeekProvider:
                     "role": "system",
                     "content": (
                         "Return only one JSON object with a candidates array. "
-                        "Each candidate must contain intent_type, label, question, "
-                        "and referenced_fields. Do not calculate values or add keys."
+                        "Each candidate must contain only intent_type and "
+                        "referenced_fields. Do not return label, question, calculated "
+                        "values, or additional keys."
                     ),
                 },
                 {
@@ -434,7 +466,7 @@ class DeepSeekProvider:
             max_tokens=1000,
         )
         try:
-            generation = RecommendationGeneration.model_validate(
+            envelope = RecommendationEnvelope.model_validate(
                 self._structured_parser.parse_object(content)
             )
         except (StructuredResponseError, ValidationError) as exc:
@@ -443,7 +475,13 @@ class DeepSeekProvider:
                 "Analysis service returned invalid recommended questions.",
                 retryable=False,
             ) from exc
-        return generation
+        candidates: list[RecommendationCandidate] = []
+        for item in envelope.candidates:
+            try:
+                candidates.append(RecommendationCandidate.model_validate(item))
+            except ValidationError:
+                continue
+        return RecommendationGeneration(candidates=candidates)
 
     def generate_intent(
         self,

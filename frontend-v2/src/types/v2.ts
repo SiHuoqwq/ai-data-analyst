@@ -172,6 +172,7 @@ export interface CreateConversationInput {
 export interface CreateRunInput {
   message: string
   dataset_version_id?: string
+  recommendation_id?: string
   confirm_version_switch?: boolean
   reply_to_message_id?: string
   parent_run_id?: string

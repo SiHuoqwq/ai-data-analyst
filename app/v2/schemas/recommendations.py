@@ -9,11 +9,19 @@ AllowedRecommendationIntent = Literal["group_comparison", "monthly_trend"]
 
 
 class RecommendationCandidate(APIModel):
+    """A bounded model selection; free text is legacy input and never public."""
+
     intent_type: AllowedRecommendationIntent
-    label: str = Field(min_length=1, max_length=60)
-    question: str = Field(min_length=1, max_length=1000)
     referenced_fields: list[str] = Field(min_length=1, max_length=12)
+    label: str | None = Field(default=None, min_length=1, max_length=60)
+    question: str | None = Field(default=None, min_length=1, max_length=1000)
 
 
 class RecommendationGeneration(APIModel):
     candidates: list[RecommendationCandidate] = Field(max_length=2)
+
+
+class RecommendationEnvelope(APIModel):
+    """Strict outer Provider envelope with independently parsed items."""
+
+    candidates: list[object] = Field(max_length=2)

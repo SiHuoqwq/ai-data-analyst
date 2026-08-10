@@ -30,7 +30,7 @@
 - Test: `tests/v2/test_recommendation_provider.py`
 
 **Interfaces:**
-- Produces: `RecommendationCandidate(intent_type, label, question, referenced_fields)` and `RecommendationGeneration(candidates)` strict Pydantic models.
+- Produces: `RecommendationCandidate(intent_type, referenced_fields, label?, question?)` and `RecommendationGeneration(candidates)` Pydantic models. `label` and `question` are receive-only legacy compatibility fields and never public model instructions.
 - Produces: `AnalysisProvider.recommend_questions(file_record) -> RecommendationGeneration`.
 - Fake provider returns no model candidates; DeepSeek sends only `_safe_dataset_profile(file_record)` plus the two allowed intent contracts.
 
@@ -53,9 +53,9 @@ AllowedRecommendationIntent = Literal["group_comparison", "monthly_trend"]
 
 class RecommendationCandidate(APIModel):
     intent_type: AllowedRecommendationIntent
-    label: str = Field(min_length=1, max_length=60)
-    question: str = Field(min_length=1, max_length=1000)
     referenced_fields: list[str] = Field(min_length=1, max_length=12)
+    label: str | None = Field(default=None, min_length=1, max_length=60)
+    question: str | None = Field(default=None, min_length=1, max_length=1000)
 
 class RecommendationGeneration(APIModel):
     candidates: list[RecommendationCandidate] = Field(max_length=2)
@@ -88,7 +88,7 @@ git commit -m "feat: add controlled question recommendation provider"
 **Interfaces:**
 - Produces: `DatasetRecommendationModel` with one unique row per dataset version and JSON accepted recommendations.
 - Produces: `DatasetRecommendationService.get_or_generate(dataset_version_id, provider) -> RecommendationResult`.
-- Consumes: `provider.recommend_questions(file_record)` from Task 1 and `PlanCompiler.compile(candidate.question, file_record)`.
+- Consumes: `provider.recommend_questions(file_record)` from Task 1 and `PlanCompiler` validation of the bounded intent and referenced fields.
 
 - [ ] **Step 1: Write failing service and migration tests**
 
@@ -119,7 +119,7 @@ Do not add startup migration behavior.
 
 - [ ] **Step 4: Implement validation, templates, and cache**
 
-The service must load `FileModel`, generate at most one candidate per intent, require every referenced field to exist, compile each candidate, and cache only accepted public fields. If model generation raises or produces no accepted candidates, build field-adapted deterministic questions from the domain registry and compile them before caching.
+The service must load `FileModel`, generate at most one candidate per intent, require every referenced field to exist, compile each candidate, and then use the deterministic intent renderer to create cacheable public labels and questions. Model-authored prose is ignored. If model generation raises or produces no accepted candidates, build field-adapted deterministic selections from the domain registry and compile them before rendering and caching.
 
 - [ ] **Step 5: Run service, migration, and compiler tests**
 
@@ -200,7 +200,7 @@ Expected: FAIL because the page still imports fixed examples.
 
 - [ ] **Step 3: Implement typed client, query, and UI states**
 
-Replace `ANALYSIS_EXAMPLE_QUESTIONS` with API data. Render `AI 推荐` for `source=model` and `字段模板` for `source=template`; retain manual textarea and click-only fill behavior. Do not expose prompt or model diagnostics.
+Replace `ANALYSIS_EXAMPLE_QUESTIONS` with API data. Render `模型选题` for `source=model` and `字段模板` for `source=template`; retain manual textarea and click-only fill behavior. `source=model` describes bounded topic selection, not model-authored public copy. Do not expose prompt or model diagnostics.
 
 - [ ] **Step 4: Run focused frontend checks**
 
@@ -308,7 +308,7 @@ Start with `start-demo.ps1` default Fake mode. Confirm two compatible datasets r
 
 - [ ] **Step 5: Stop and request explicit DeepSeek acceptance authorization**
 
-Do not make a paid recommendation request unless the user separately authorizes a bounded acceptance budget. If authorized, record only request count, sanitized status, dataset hash/version, recommendation source, accepted questions, and cache-hit behavior.
+Do not make a paid recommendation request unless the user separately authorizes a bounded acceptance budget. If authorized, record only request count, sanitized status, dataset hash/version, recommendation source, accepted intent/field selections, server-rendered questions, and cache-hit behavior.
 
 - [ ] **Step 6: Update only necessary public documentation and commit**
 
@@ -324,3 +324,72 @@ Skip this commit if neither document needs a truthful update.
 Run: `git status --short --branch`
 
 Expected: clean worktree; no `.env`, database, uploaded file, chart PNG, model response, or runtime log tracked; no remote push.
+
+---
+
+## Security hardening Round 4 implementation addendum
+
+**Goal:** Make every recommendation response and selected Run derive from one freshly validated, server-owned intent selection, including legacy cache hits and database race winners.
+
+**Architecture:** Treat cached recommendation JSON as untrusted input. Reconstruct only `intent_type` and `referenced_fields`, validate them against the current dataset and Provider identity, compile the resulting `AnalysisIntent`, and deterministically re-render public copy before either returning it or resolving a Run selection. A dataset-, Provider-, and cache-generation-bound recommendation ID is the only new client selection handle; the server also requires the submitted message to equal the freshly rendered question, then passes the same validated `AnalysisIntent` object to `AnalysisExecutor`. Exact idempotency replays are resolved from their persisted request hash before mutable recommendation-cache validation, so a lost response can still recover its already-created Run without authorizing a new Run.
+
+**Global constraints:** Provider outer envelopes remain strict; invalid candidate items are dropped independently. Non-registry field names never enter public grammar. Fake and DeepSeek selections share the same resolver and executor path. Evidence and deterministic pandas outputs do not change. No real DeepSeek request is permitted.
+
+### Task 7: Cache reconstruction, aliases, and compact sensitive windows
+
+**Files:**
+- Modify: `app/v2/services/recommendations.py`
+- Modify: `app/v2/services/recommendation_renderer.py`
+- Modify: `app/v2/services/recommendation_safety.py`
+- Test: `tests/v2/test_recommendation_service.py`
+- Test: `tests/v2/test_recommendation_provider.py`
+
+- [x] Add RED tests that seed same-Provider/model cache rows with hostile `label` and `question`, and assert both a normal cache hit and an `IntegrityError` winner return newly rendered copy only.
+- [x] Add RED tests proving one-token English, one-token Chinese, and separator-rich non-registry fields render as stable `field-<position>-<digest>` aliases, while registered fields retain registry labels.
+- [x] Add RED MockTransport cases for prefix/suffix forms such as `prefix.a.pi.key.hash` and `meta.ac.cess.key.version`, plus collision controls such as `source_pathway` and `storage_keynote`.
+- [x] Implement one cache canonicalization path used by normal hits, race winners, and selection resolution. Template rows are regenerated from current template candidates; model rows retain only independently valid controlled selections.
+- [x] Implement exact compact equality over every contiguous semantic-token window and remove the non-registry single-token display exception.
+- [x] Run `python -m pytest tests/v2/test_recommendation_service.py tests/v2/test_recommendation_provider.py -q` and confirm GREEN.
+
+### Task 8: Per-item Provider parsing
+
+**Files:**
+- Modify: `app/v2/schemas/recommendations.py`
+- Modify: `app/v2/services/provider.py`
+- Test: `tests/v2/test_recommendation_provider.py`
+
+- [x] Add RED tests where a valid candidate is adjacent to an unsupported intent or extra-key candidate and survives, while an outer extra key, non-array `candidates`, or more than two items still raises `PROVIDER_INVALID_RESPONSE`.
+- [x] Parse the strict outer envelope first, then `RecommendationCandidate.model_validate` each item independently and retain only valid items.
+- [x] Run `python -m pytest tests/v2/test_recommendation_provider.py -q` and confirm GREEN.
+
+### Task 9: Trusted recommendation selection through Run execution
+
+**Files:**
+- Modify: `app/v2/schemas/api.py`
+- Modify: `app/v2/api/routes.py`
+- Modify: `app/v2/services/recommendations.py`
+- Modify: `app/v2/services/runs.py`
+- Modify: `app/v2/services/executor.py`
+- Modify: `frontend-v2/src/types/v2.ts`
+- Modify: `frontend-v2/src/pages/analysis-workbench/AnalysisWorkbenchPage.tsx`
+- Test: `tests/v2/test_recommendation_api.py`
+- Test: `tests/v2/test_recommendation_service.py`
+- Test: `tests/v2/test_run_lifecycle.py`
+- Test: `frontend-v2/src/pages/analysis-workbench/AnalysisWorkbenchPage.test.tsx`
+- Test: `frontend-v2/src/api/v2-client.test.ts`
+
+- [x] Add RED service/API tests for valid selection, wrong dataset/cache/Provider, real cache-generation replacement, stale ID, question tampering, and lost-response idempotency replay. The API must reject invalid selections before creating a new Run while exact retries recover an already-created Run.
+- [x] Add a RED executor test whose Provider raises if `generate_intent` is called; a validated non-registry recommendation must still complete through the supplied `AnalysisIntent`.
+- [x] Add RED frontend tests proving a card click stores and submits `recommendation_id`, any textarea edit clears it, and manual questions omit it.
+- [x] Generate each public recommendation ID from dataset, cache generation, Provider/model, controlled intent type, and ordered referenced fields. Resolve the handle only from that matching cache generation, require an exact freshly rendered question, and return the freshly compiled `AnalysisIntent`.
+- [x] Include `recommendation_id` in Run idempotency identity and context metadata, and construct `AnalysisExecutor(provider, trusted_intent=resolved_intent)` only for a newly created Run.
+- [x] In `AnalysisExecutor`, bypass Provider intent recognition when `trusted_intent` is present, then compile and validate that same object against the Run dataset before execution.
+- [x] Track the selected recommendation independently from retry idempotency state in React; clear it on dataset changes, successful submission, and every manual textarea change.
+- [x] Run focused backend and frontend suites and confirm GREEN.
+
+### Task 10: Verification, report, and commits
+
+- [x] Run full backend pytest, release readiness, compileall, full frontend test/typecheck/lint/build, and a fresh disposable Fake HTTP workflow containing recommendation selection plus group/monthly Runs.
+- [x] Run `git diff --check` and inspect the scoped diff for secrets, paths, private data, and unrelated edits.
+- [x] Append Round 4 TDD evidence, verification results, commits, and remaining concerns to `security-hardening-report.md`.
+- [x] Commit the current Round 3 work and Round 4 changes as one scoped local commit; do not push.

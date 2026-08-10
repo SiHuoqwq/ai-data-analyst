@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.exc import IntegrityError
@@ -12,7 +13,7 @@ from app.db.conversation_store import save_chart
 from app.db.models import ChartModel, ConversationModel, FileModel, MessageModel
 from app.main import app
 from app.services.agent import AgentController
-from app.services import report_generator
+from app.services import parser, profiler, report_generator
 
 
 class FakeAnalysisLLM:
@@ -180,6 +181,80 @@ def test_xls_upload_is_rejected_with_clear_error(isolated_runtime):
 
     assert response.status_code == 400
     assert "不支持的文件格式" in response.json()["detail"]
+
+
+def test_upload_rejects_overlong_filename_without_echoing_it(isolated_runtime):
+    filename = f"{'x' * 252}.csv"
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/files/upload",
+            files={"file": (filename, b"value\n1\n", "text/csv")},
+        )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "文件名过长，最多支持 255 个字符。"
+    assert filename not in response.text
+    assert list(Path(settings.upload_dir).iterdir()) == []
+
+
+def test_upload_rejects_more_than_one_thousand_columns(isolated_runtime):
+    columns = [f"column_{index}" for index in range(1_001)]
+    content = f"{','.join(columns)}\n{','.join('1' for _ in columns)}\n".encode()
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/files/upload",
+            files={"file": ("wide.csv", content, "text/csv")},
+        )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "文件包含过多列，最多支持 1000 列。"
+    assert "column_1000" not in response.text
+    assert list(Path(settings.upload_dir).iterdir()) == []
+
+
+def test_upload_rejects_overlong_column_name_without_echoing_it(isolated_runtime):
+    column_name = "sensitive-" + ("x" * 246)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/files/upload",
+            files={
+                "file": (
+                    "long-column.csv",
+                    f"{column_name}\n1\n".encode(),
+                    "text/csv",
+                )
+            },
+        )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "列名过长，每个列名最多支持 255 个字符。"
+    assert column_name not in response.text
+    assert list(Path(settings.upload_dir).iterdir()) == []
+
+
+@pytest.mark.parametrize(
+    ("columns", "expected_message"),
+    [
+        ([f"column_{index}" for index in range(1_001)], "文件包含过多列"),
+        (["x" * 256], "列名过长"),
+    ],
+)
+@pytest.mark.parametrize(
+    "entrypoint",
+    [parser.extract_columns_info, profiler.generate_profile],
+)
+def test_column_metadata_entrypoints_enforce_the_same_bounded_profile(
+    columns,
+    expected_message,
+    entrypoint,
+):
+    dataframe = pd.DataFrame(columns=columns)
+
+    with pytest.raises(ValueError, match=expected_message):
+        entrypoint(dataframe)
 
 
 def test_sqlite_foreign_keys_reject_orphan_chart(isolated_runtime):

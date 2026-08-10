@@ -1,7 +1,12 @@
 import os
 import uuid
 from fastapi import APIRouter, UploadFile, File, HTTPException
-from app.services.parser import parse_file, extract_columns_info
+from app.services.parser import (
+    DatasetMetadataValidationError,
+    extract_columns_info,
+    parse_file,
+    validate_upload_filename,
+)
 from app.services.profiler import generate_profile
 from app.config import settings
 from app.db.database import SessionLocal
@@ -14,6 +19,10 @@ router = APIRouter(prefix="/api/v1/files", tags=["files"])
 @router.post("/upload", response_model=FileDetail)
 async def upload_file(file: UploadFile = File(...)):
     filename = file.filename or ""
+    try:
+        validate_upload_filename(filename)
+    except DatasetMetadataValidationError as exc:
+        raise HTTPException(400, str(exc)) from exc
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
     if ext not in ("csv", "xlsx"):
         raise HTTPException(400, f"不支持的文件格式: .{ext}")
@@ -29,6 +38,10 @@ async def upload_file(file: UploadFile = File(...)):
         df = parse_file(filepath)
         columns_info = extract_columns_info(df)
         profile = generate_profile(df)
+    except DatasetMetadataValidationError as exc:
+        if os.path.exists(filepath):
+            os.remove(filepath)
+        raise HTTPException(422, str(exc)) from exc
     except Exception as exc:
         if os.path.exists(filepath):
             os.remove(filepath)

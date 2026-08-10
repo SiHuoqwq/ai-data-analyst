@@ -28,6 +28,84 @@ class AnalysisRunService:
     def __init__(self, event_emitter: EventEmitter | None = None):
         self.events = event_emitter or EventEmitter()
 
+    @staticmethod
+    def _request_hash(
+        *,
+        message: str,
+        dataset_version_id: str,
+        parent_run_id: str | None,
+        retry_of_run_id: str | None,
+        provider_name: str,
+        provider_model: str | None,
+        recommendation_id: str | None,
+    ) -> str:
+        request_body = {
+            "message": message,
+            "dataset_version_id": dataset_version_id,
+            "parent_run_id": parent_run_id,
+            "retry_of_run_id": retry_of_run_id,
+            "provider": provider_name,
+            "model": provider_model,
+        }
+        if recommendation_id is not None:
+            request_body["recommendation_id"] = recommendation_id
+        return hashlib.sha256(
+            json.dumps(
+                request_body,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+
+    def find_idempotent_run(
+        self,
+        *,
+        conversation_id: str,
+        dataset_version_id: str | None,
+        message: str,
+        idempotency_key: str,
+        parent_run_id: str | None = None,
+        retry_of_run_id: str | None = None,
+        provider_name: str = "fake",
+        provider_model: str | None = "deterministic-v1",
+        recommendation_id: str | None = None,
+    ) -> AnalysisRunModel | None:
+        """Return an exact replay before mutable recommendation validation."""
+        session = SessionLocal()
+        try:
+            existing = (
+                session.query(AnalysisRunModel)
+                .filter_by(
+                    conversation_id=conversation_id,
+                    idempotency_key=idempotency_key,
+                )
+                .first()
+            )
+            if existing is None:
+                return None
+            request_hash = self._request_hash(
+                message=message,
+                dataset_version_id=(
+                    dataset_version_id or existing.dataset_version_id
+                ),
+                parent_run_id=parent_run_id,
+                retry_of_run_id=retry_of_run_id,
+                provider_name=provider_name,
+                provider_model=provider_model,
+                recommendation_id=recommendation_id,
+            )
+            if existing.request_hash != request_hash:
+                raise RunServiceError(
+                    "IDEMPOTENCY_CONFLICT",
+                    "幂等键已用于不同请求",
+                    409,
+                )
+            session.refresh(existing)
+            return existing
+        finally:
+            session.close()
+
     def create_run(
         self,
         conversation_id: str,
@@ -38,6 +116,7 @@ class AnalysisRunService:
         retry_of_run_id: str | None = None,
         provider_name: str = "fake",
         provider_model: str = "deterministic-v1",
+        recommendation_id: str | None = None,
     ) -> AnalysisRunModel:
         return self.create_run_result(
             conversation_id=conversation_id,
@@ -48,6 +127,7 @@ class AnalysisRunService:
             retry_of_run_id=retry_of_run_id,
             provider_name=provider_name,
             provider_model=provider_model,
+            recommendation_id=recommendation_id,
         ).run
 
     def create_run_result(
@@ -60,6 +140,7 @@ class AnalysisRunService:
         retry_of_run_id: str | None = None,
         provider_name: str = "fake",
         provider_model: str = "deterministic-v1",
+        recommendation_id: str | None = None,
     ) -> RunCreationResult:
         session = SessionLocal()
         try:
@@ -80,22 +161,15 @@ class AnalysisRunService:
                     "数据集与当前对话不一致",
                     409,
                 )
-            request_body = {
-                "message": message,
-                "dataset_version_id": resolved_version_id,
-                "parent_run_id": parent_run_id,
-                "retry_of_run_id": retry_of_run_id,
-                "provider": provider_name,
-                "model": provider_model,
-            }
-            request_hash = hashlib.sha256(
-                json.dumps(
-                    request_body,
-                    ensure_ascii=False,
-                    sort_keys=True,
-                    separators=(",", ":"),
-                ).encode("utf-8")
-            ).hexdigest()
+            request_hash = self._request_hash(
+                message=message,
+                dataset_version_id=resolved_version_id,
+                parent_run_id=parent_run_id,
+                retry_of_run_id=retry_of_run_id,
+                provider_name=provider_name,
+                provider_model=provider_model,
+                recommendation_id=recommendation_id,
+            )
             existing = (
                 session.query(AnalysisRunModel)
                 .filter_by(
@@ -137,6 +211,11 @@ class AnalysisRunService:
                     "selected_message_ids": [trigger.id],
                     "selected_run_ids": [],
                     "selected_artifact_ids": [],
+                    **(
+                        {"recommendation_id": recommendation_id}
+                        if recommendation_id is not None
+                        else {}
+                    ),
                 },
                 progress_json={"completed_steps": 0, "total_steps": None},
                 idempotency_key=idempotency_key,

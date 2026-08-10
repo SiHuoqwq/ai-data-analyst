@@ -319,6 +319,7 @@ def test_recommendation_validation_rejects_registered_metric_in_wrong_workflow(
 
 
 def test_deepseek_returns_two_valid_recommendations_from_mocked_json(tmp_path):
+    captured = {}
     csv_path = tmp_path / "valid-recommendation.csv"
     csv_path.write_text(
         "course_category,enrollment_date,completion_rate\n"
@@ -328,15 +329,15 @@ def test_deepseek_returns_two_valid_recommendations_from_mocked_json(tmp_path):
     record = file_record()
     record.filepath = str(csv_path)
     record.columns_info[1]["dtype"] = "object"
-    provider = provider_with(
-        lambda _request: response(
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return response(
             json.dumps(
                 {
                     "candidates": [
                         {
                             "intent_type": "group_comparison",
-                            "label": "Compare completion",
-                            "question": "Which course categories have the lowest completion rate?",
                             "referenced_fields": [
                                 "course_category",
                                 "completion_rate",
@@ -344,8 +345,6 @@ def test_deepseek_returns_two_valid_recommendations_from_mocked_json(tmp_path):
                         },
                         {
                             "intent_type": "monthly_trend",
-                            "label": "Monthly enrollments",
-                            "question": "How do enrollments change by month and course category?",
                             "referenced_fields": [
                                 "course_category",
                                 "enrollment_date",
@@ -355,7 +354,8 @@ def test_deepseek_returns_two_valid_recommendations_from_mocked_json(tmp_path):
                 }
             )
         )
-    )
+
+    provider = provider_with(handler)
 
     result = provider.recommend_questions(record)
 
@@ -367,6 +367,20 @@ def test_deepseek_returns_two_valid_recommendations_from_mocked_json(tmp_path):
         "course_category",
         "completion_rate",
     ]
+    assert result.candidates[0].label is None
+    assert result.candidates[0].question is None
+    assert "only intent_type and referenced_fields" in (
+        captured["body"]["messages"][0]["content"]
+    )
+    user_payload = json.loads(captured["body"]["messages"][1]["content"])
+    candidate_schema = user_payload["selection_schema"]["properties"][
+        "candidates"
+    ]["items"]
+    assert candidate_schema["additionalProperties"] is False
+    assert set(candidate_schema["properties"]) == {
+        "intent_type",
+        "referenced_fields",
+    }
 
 
 def test_deepseek_accepts_monthly_recommendation_with_integer_category_code(
@@ -491,27 +505,82 @@ def test_deepseek_leaves_monthly_field_role_validation_to_the_service():
     ]
 
 
+def test_deepseek_drops_invalid_candidate_item_without_losing_valid_sibling():
+    provider = provider_with(
+        lambda _request: response(
+            json.dumps(
+                {
+                    "candidates": [
+                        {
+                            "intent_type": "unsupported_intent",
+                            "referenced_fields": ["course_category"],
+                        },
+                        {
+                            "intent_type": "group_comparison",
+                            "referenced_fields": [
+                                "course_category",
+                                "completion_rate",
+                            ],
+                        },
+                    ]
+                }
+            )
+        )
+    )
+
+    result = provider.recommend_questions(file_record())
+
+    assert [item.intent_type for item in result.candidates] == [
+        "group_comparison"
+    ]
+
+
+def test_deepseek_drops_extra_key_candidate_item_without_losing_valid_sibling():
+    provider = provider_with(
+        lambda _request: response(
+            json.dumps(
+                {
+                    "candidates": [
+                        {
+                            "intent_type": "group_comparison",
+                            "referenced_fields": ["course_category"],
+                            "unexpected": True,
+                        },
+                        {
+                            "intent_type": "monthly_trend",
+                            "referenced_fields": [
+                                "course_category",
+                                "enrollment_date",
+                            ],
+                        },
+                    ]
+                }
+            )
+        )
+    )
+
+    result = provider.recommend_questions(file_record())
+
+    assert [item.intent_type for item in result.candidates] == ["monthly_trend"]
+
+
 @pytest.mark.parametrize(
-    "candidate",
+    "payload",
     [
+        {"candidates": [], "unexpected": True},
+        {"candidates": "not-an-array"},
         {
-            "intent_type": "group_comparison",
-            "label": "Compare completion",
-            "question": "Which course categories have the lowest completion rate?",
-            "referenced_fields": ["course_category", "completion_rate"],
-            "unexpected": True,
-        },
-        {
-            "intent_type": "unsupported_intent",
-            "label": "Unsupported",
-            "question": "This must not be shown.",
-            "referenced_fields": ["course_category"],
+            "candidates": [
+                {"intent_type": "group_comparison", "referenced_fields": ["a"]},
+                {"intent_type": "group_comparison", "referenced_fields": ["b"]},
+                {"intent_type": "group_comparison", "referenced_fields": ["c"]},
+            ]
         },
     ],
 )
-def test_deepseek_rejects_recommendations_outside_the_strict_contract(candidate):
+def test_deepseek_keeps_recommendation_outer_envelope_strict(payload):
     provider = provider_with(
-        lambda _request: response(json.dumps({"candidates": [candidate]}))
+        lambda _request: response(json.dumps(payload))
     )
 
     with pytest.raises(ProviderError) as raised:
@@ -620,6 +689,14 @@ def test_deepseek_profile_excludes_sensitive_and_path_like_field_names():
             {"name": "localFolder", "dtype": "object"},
             {"name": "sessionCookie", "dtype": "object"},
             {"name": "clientCertificate", "dtype": "object"},
+            {"name": "a.pi.key", "dtype": "object"},
+            {"name": "ac.cess.key", "dtype": "object"},
+            {"name": "sto.rage.folder", "dtype": "object"},
+            {"name": "file.u.r.i", "dtype": "object"},
+            {"name": "prefix.a.pi.key.hash", "dtype": "object"},
+            {"name": "meta.ac.cess.key.version", "dtype": "object"},
+            {"name": "snapshot.sto.rage.folder.count", "dtype": "object"},
+            {"name": "normalized.file.u.r.i.value", "dtype": "object"},
             {"name": "ＦｉｌｅＰａｔｈ", "dtype": "object"},
             {"name": "C:\\private\\value", "dtype": "object"},
             {"name": "../private/value", "dtype": "object"},
@@ -682,6 +759,14 @@ def test_deepseek_profile_excludes_sensitive_and_path_like_field_names():
         "localFolder",
         "sessionCookie",
         "clientCertificate",
+        "a.pi.key",
+        "ac.cess.key",
+        "sto.rage.folder",
+        "file.u.r.i",
+        "prefix.a.pi.key.hash",
+        "meta.ac.cess.key.version",
+        "snapshot.sto.rage.folder.count",
+        "normalized.file.u.r.i.value",
         "ＦｉｌｅＰａｔｈ",
         "C:\\private\\value",
         "../private/value",

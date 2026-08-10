@@ -1,8 +1,11 @@
 import pandas as pd
 import numpy as np
 
+from app.services.parser import validate_dataframe_columns
+
 
 def generate_profile(df: pd.DataFrame) -> str:
+    validate_dataframe_columns(df)
     numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
     text_cols = df.select_dtypes(include=["object"]).columns.tolist()
 

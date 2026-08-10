@@ -248,8 +248,11 @@ docs/release/            # 架构、部署与演示材料
 
 ## Dataset-aware suggestions and readable charts
 
-- Dataset recommendation cards are generated from safe uploaded-field metadata;
-  selecting a card fills the analysis input and never starts a Run by itself.
+- Models may select only a bounded intent and referenced fields from safe
+  uploaded-field metadata. Public card labels and questions are rendered
+  deterministically by the server; `source=model` means model-selected topic,
+  not model-authored copy. Selecting a card fills the analysis input and never
+  starts a Run by itself.
 - High-cardinality group comparisons use server-rendered horizontal Top 10 PNG
   charts. Monthly charts retain the complete supported month range.
 - Fake mode produces deterministic recommendation templates without any DeepSeek

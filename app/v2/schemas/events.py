@@ -38,6 +38,7 @@ class RunStatusPayload(StrictEventModel):
         "model",
         "repaired_model",
         "controlled_fallback",
+        "trusted_recommendation",
     ] | None = None
 
 

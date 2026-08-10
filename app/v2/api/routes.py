@@ -66,6 +66,14 @@ def _raise_recommendation_service_error(exc: RecommendationServiceError):
     ) from exc
 
 
+def _close_owned_provider(provider) -> None:
+    if not getattr(provider, "_owned_by_provider_dependency", False):
+        return
+    close = getattr(provider, "close", None)
+    if callable(close):
+        close()
+
+
 @router.post(
     "/conversations",
     status_code=201,
@@ -125,57 +133,109 @@ def create_run(
     ),
     provider=Depends(get_provider),
 ):
-    if not idempotency_key:
-        raise V2APIError(
-            422,
-            "VALIDATION_ERROR",
-            "缺少 Idempotency-Key",
-            {"header": "Idempotency-Key"},
-        )
+    provider_handed_to_executor = False
     try:
-        result = run_service.create_run_result(
-            conversation_id=conversation_id,
-            dataset_version_id=body.dataset_version_id,
-            message=body.message,
-            idempotency_key=idempotency_key,
-            parent_run_id=body.parent_run_id,
-            retry_of_run_id=body.retry_of_run_id,
-            provider_name=provider.name,
-            provider_model=provider.model,
-        )
-        run = result.run
-    except RunServiceError as exc:
-        _raise_service_error(exc)
+        if not idempotency_key:
+            raise V2APIError(
+                422,
+                "VALIDATION_ERROR",
+                "缺少 Idempotency-Key",
+                {"header": "Idempotency-Key"},
+            )
+        try:
+            run = run_service.find_idempotent_run(
+                conversation_id=conversation_id,
+                dataset_version_id=body.dataset_version_id,
+                message=body.message,
+                idempotency_key=idempotency_key,
+                parent_run_id=body.parent_run_id,
+                retry_of_run_id=body.retry_of_run_id,
+                provider_name=provider.name,
+                provider_model=provider.model,
+                recommendation_id=body.recommendation_id,
+            )
+        except RunServiceError as exc:
+            _raise_service_error(exc)
+        trusted_intent = None
+        created = False
+        if run is None:
+            if body.recommendation_id is not None:
+                if body.dataset_version_id is None:
+                    raise V2APIError(
+                        422,
+                        "VALIDATION_ERROR",
+                        "推荐选择必须包含数据集版本",
+                        {"field": "dataset_version_id"},
+                    )
+                try:
+                    trusted_intent = (
+                        recommendation_service.resolve_recommendation_intent(
+                            body.dataset_version_id,
+                            provider,
+                            body.recommendation_id,
+                            body.message,
+                        )
+                    )
+                except RecommendationServiceError as exc:
+                    raise V2APIError(
+                        409,
+                        "RECOMMENDATION_SELECTION_INVALID",
+                        "推荐问题已失效，请刷新后重试。",
+                        retryable=False,
+                    ) from exc
+            try:
+                result = run_service.create_run_result(
+                    conversation_id=conversation_id,
+                    dataset_version_id=body.dataset_version_id,
+                    message=body.message,
+                    idempotency_key=idempotency_key,
+                    parent_run_id=body.parent_run_id,
+                    retry_of_run_id=body.retry_of_run_id,
+                    provider_name=provider.name,
+                    provider_model=provider.model,
+                    recommendation_id=body.recommendation_id,
+                )
+                run = result.run
+                created = result.created
+            except RunServiceError as exc:
+                _raise_service_error(exc)
 
-    session = SessionLocal()
-    try:
-        message = session.get(MessageModel, run.trigger_message_id)
-        response = {
-            "data": {
-                "message": {
-                    "id": message.id,
-                    "role": message.role,
-                    "content_text": message.content,
-                    "status": "committed",
+        session = SessionLocal()
+        try:
+            message = session.get(MessageModel, run.trigger_message_id)
+            response = {
+                "data": {
+                    "message": {
+                        "id": message.id,
+                        "role": message.role,
+                        "content_text": message.content,
+                        "status": "committed",
+                    },
+                    "run": {
+                        "id": run.id,
+                        "conversation_id": run.conversation_id,
+                        "status": run.status,
+                        "dataset_version_id": run.dataset_version_id,
+                        "input_message_id": run.trigger_message_id,
+                        "output_message_id": run.answer_message_id,
+                    },
+                    "events_url": f"/api/v2/runs/{run.id}/events",
                 },
-                "run": {
-                    "id": run.id,
-                    "conversation_id": run.conversation_id,
-                    "status": run.status,
-                    "dataset_version_id": run.dataset_version_id,
-                    "input_message_id": run.trigger_message_id,
-                    "output_message_id": run.answer_message_id,
-                },
-                "events_url": f"/api/v2/runs/{run.id}/events",
-            },
-            "meta": _meta(),
-        }
+                "meta": _meta(),
+            }
+        finally:
+            session.close()
+
+        if created:
+            workers.submit(
+                AnalysisExecutor(provider, trusted_intent=trusted_intent).execute,
+                run.id,
+            )
+            provider_handed_to_executor = True
+        return response
     finally:
-        session.close()
-
-    if result.created:
-        workers.submit(AnalysisExecutor(provider).execute, run.id)
-    return response
+        if not provider_handed_to_executor:
+            _close_owned_provider(provider)
 
 
 @router.get(

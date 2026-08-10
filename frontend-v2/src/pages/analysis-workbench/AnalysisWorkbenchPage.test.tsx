@@ -252,7 +252,7 @@ describe('AnalysisWorkbenchPage', () => {
     const user = userEvent.setup()
 
     renderSwitchablePage()
-    expect(screen.getByText('AI 推荐')).toBeInTheDocument()
+    expect(screen.getByText('模型选题')).toBeInTheDocument()
     expect(screen.getByText('课程组合比较')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '使用课程组合比较推荐' }))
     expect(screen.getByLabelText('输入分析问题')).toHaveValue('比较课程类别与完成率。')
@@ -292,6 +292,37 @@ describe('AnalysisWorkbenchPage', () => {
     expect(input).toHaveValue('比较课程类别与完成率。')
     expect(createConversation).not.toHaveBeenCalled()
     expect(createRun).not.toHaveBeenCalled()
+  })
+
+  it('submits the trusted recommendation id after the user confirms a card', async () => {
+    const user = userEvent.setup()
+    renderPage()
+
+    await user.click(screen.getByRole('button', { name: '使用课程组合比较推荐' }))
+    await user.click(screen.getByRole('button', { name: '开始分析' }))
+
+    await waitFor(() => expect(createRun).toHaveBeenCalledWith(expect.objectContaining({
+      input: expect.objectContaining({
+        message: '比较课程类别与完成率。',
+        dataset_version_id: 'file-1',
+        recommendation_id: 'recommendation-1',
+      }),
+    })))
+  })
+
+  it('clears the trusted recommendation id after any manual edit', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    const input = screen.getByLabelText('输入分析问题')
+
+    await user.click(screen.getByRole('button', { name: '使用课程组合比较推荐' }))
+    await user.type(input, ' ')
+    await user.click(screen.getByRole('button', { name: '开始分析' }))
+
+    await waitFor(() => expect(createRun).toHaveBeenCalled())
+    const submitted = createRun.mock.calls[0][0].input
+    expect(submitted.message).toBe('比较课程类别与完成率。')
+    expect(submitted).not.toHaveProperty('recommendation_id')
   })
 
   it('creates a conversation only on the first real submission, then creates a run', async () => {

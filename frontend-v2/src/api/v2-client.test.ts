@@ -68,7 +68,11 @@ describe('V2 API client', () => {
 
     const result = await createAnalysisRun(
       'conversation-1',
-      { message: '分析数据', dataset_version_id: 'file-1' },
+      {
+        message: '分析数据',
+        dataset_version_id: 'file-1',
+        recommendation_id: 'group-comparison-abcd1234',
+      },
       'submit-key-1',
     )
 
@@ -78,6 +82,11 @@ describe('V2 API client', () => {
       expect.objectContaining({
         method: 'POST',
         headers: expect.objectContaining({ 'Idempotency-Key': 'submit-key-1' }),
+        body: JSON.stringify({
+          message: '分析数据',
+          dataset_version_id: 'file-1',
+          recommendation_id: 'group-comparison-abcd1234',
+        }),
       }),
     )
   })

@@ -16,6 +16,11 @@ from app.v2.db.models import (
 )
 from app.v2.services.executor import AnalysisExecutor
 from app.v2.services.provider import FakeAnalysisProvider
+from app.v2.schemas.recommendations import (
+    RecommendationCandidate,
+    RecommendationGeneration,
+)
+from app.v2.services.recommendations import DatasetRecommendationService
 from app.v2.services.runs import AnalysisRunService
 from app.v2.services.streaming import RunEventStream
 
@@ -119,6 +124,95 @@ def test_fake_provider_completes_persisted_vertical_run(v2_runtime):
     database.configure_database(v2_runtime["database_url"])
     restored = database.SessionLocal().get(AnalysisRunModel, run.id)
     assert restored.status == "completed"
+
+
+def test_nonregistry_recommendation_executes_same_validated_intent_without_reclassification(
+    v2_runtime, tmp_path
+):
+    csv_path = tmp_path / "nonregistry-recommendation.csv"
+    csv_path.write_text(
+        "customsegment\nAlpha\nBeta\n",
+        encoding="utf-8",
+    )
+    session = database.SessionLocal()
+    try:
+        file_record = session.get(FileModel, "file-1")
+        file_record.filename = "nonregistry-recommendation.csv"
+        file_record.filepath = str(csv_path)
+        file_record.row_count = 2
+        file_record.col_count = 1
+        file_record.columns_info = [
+            {"name": "customsegment", "dtype": "object"}
+        ]
+        session.commit()
+    finally:
+        session.close()
+
+    class SelectionProvider(FakeAnalysisProvider):
+        name = "deepseek"
+        model = "selection-test-v1"
+
+        def recommend_questions(self, _file_record):
+            return RecommendationGeneration(
+                candidates=[
+                    RecommendationCandidate(
+                        intent_type="group_comparison",
+                        referenced_fields=["customsegment"],
+                    )
+                ]
+            )
+
+        def generate_intent(self, _question, _file_record):
+            raise AssertionError("trusted recommendation must not be reclassified")
+
+    provider = SelectionProvider()
+    service = DatasetRecommendationService()
+    recommendation = service.get_or_generate("file-1", provider).recommendations[0]
+    assert "customsegment" not in (
+        recommendation["label"] + recommendation["question"]
+    )
+    selected_intent = service.resolve_recommendation_intent(
+        "file-1",
+        provider,
+        recommendation["id"],
+        recommendation["question"],
+    )
+    run = AnalysisRunService().create_run(
+        conversation_id="conversation-1",
+        dataset_version_id="file-1",
+        message=recommendation["question"],
+        idempotency_key="trusted-nonregistry-selection",
+        recommendation_id=recommendation["id"],
+    )
+
+    AnalysisExecutor(provider, trusted_intent=selected_intent).execute(run.id)
+
+    session = database.SessionLocal()
+    try:
+        completed = session.get(AnalysisRunModel, run.id)
+        assert completed.status == "completed", {
+            "failure": completed.failure_json,
+            "steps": [
+                {
+                    "operation": step.operation,
+                    "status": step.status,
+                    "error": step.error_json,
+                }
+                for step in session.query(RunStepModel)
+                .filter_by(run_id=run.id)
+                .order_by(RunStepModel.sequence)
+            ],
+        }
+        assert completed.context_snapshot_json["intent_mode"] == "trusted_recommendation"
+        assert completed.context_snapshot_json["recommendation_id"] == recommendation["id"]
+        assert (
+            session.query(ArtifactModel)
+            .filter_by(run_id=run.id, artifact_type="table")
+            .count()
+            >= 1
+        )
+    finally:
+        session.close()
 
 
 def test_executor_persists_sanitized_failure(v2_runtime):
