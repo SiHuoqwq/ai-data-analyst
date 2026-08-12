@@ -91,6 +91,8 @@ class ChartPlanner:
                 "分析结果没有可用于图表横轴的维度",
                 {"source_step_id": source_step_id},
             )
+        if time_dimension is None and result.row_count < 2:
+            return []
 
         metrics_by_unit: dict[MetricUnit, list] = {}
         for metric in schema.metrics:

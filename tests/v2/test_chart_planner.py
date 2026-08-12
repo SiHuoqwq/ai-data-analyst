@@ -280,6 +280,54 @@ def test_low_cardinality_single_dimension_keeps_vertical_behavior():
     assert specs[0].title == "课程类别：报名人数"
 
 
+def test_single_group_result_does_not_create_a_comparison_chart():
+    schema = ResultSchema(
+        dimensions=[
+            ResultDimension(
+                id="dimension_1",
+                label="课程类别",
+                role="category",
+                data_type="string",
+                source_field="课程类别",
+            )
+        ],
+        metrics=[_metric("sample_count", "报名人数", "count")],
+        grain=["dimension_1"],
+    )
+
+    specs = ChartPlanner().plan(
+        "group_aggregate",
+        _result(schema, row_count=1),
+    )
+
+    assert specs == []
+
+
+def test_single_time_point_still_uses_the_time_series_chart_rule():
+    schema = ResultSchema(
+        dimensions=[
+            ResultDimension(
+                id="period",
+                label="月份",
+                role="time",
+                data_type="date",
+                source_field="报名日期",
+            )
+        ],
+        metrics=[_metric("enrollment_count", "报名人数", "count")],
+        grain=["period"],
+        time_granularity="month",
+    )
+
+    specs = ChartPlanner().plan(
+        "monthly_aggregate",
+        _result(schema, row_count=1),
+    )
+
+    assert len(specs) == 1
+    assert specs[0].chart_type == "line"
+
+
 def test_planner_rejects_missing_output_contract():
     result = ToolExecutionResult(
         "success",
@@ -315,6 +363,6 @@ def test_planner_rejects_schema_without_renderable_dimension():
     )
 
     with pytest.raises(ChartPlanningError) as error:
-        ChartPlanner().plan("source", _result(schema))
+        ChartPlanner().plan("source", _result(schema, row_count=1))
 
     assert error.value.code == "CHART_DIMENSION_NOT_FOUND"

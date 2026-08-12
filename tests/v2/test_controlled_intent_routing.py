@@ -438,6 +438,39 @@ def test_unsupported_fallback_executes_no_tools_or_assistant_message(
     session.close()
 
 
+def test_single_group_run_completes_with_table_and_without_chart(v2_runtime):
+    _prepare_dataset(v2_runtime)
+    session = database.SessionLocal()
+    file_record = session.get(FileModel, "file-1")
+    csv_path = Path(file_record.filepath)
+    rows = csv_path.read_text(encoding="utf-8").splitlines()
+    csv_path.write_text(
+        "\n".join(
+            [rows[0]]
+            + [row.replace("数据分析,", "AI应用,") for row in rows[1:]]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    session.close()
+
+    run = AnalysisRunService().create_run(
+        "conversation-1",
+        "file-1",
+        "比较不同课程类别的报名人数和完成率",
+        "single-group-no-chart",
+    )
+    AnalysisExecutor(ValidIntentProvider("model")).execute(run.id)
+
+    session = database.SessionLocal()
+    stored = session.get(AnalysisRunModel, run.id)
+    artifacts = session.query(ArtifactModel).filter_by(run_id=run.id).all()
+    assert stored.status == "completed", stored.failure_json
+    assert any(item.artifact_type == "table" for item in artifacts)
+    assert not any(item.artifact_type == "chart" for item in artifacts)
+    session.close()
+
+
 def test_missing_teacher_fields_refuses_before_provider_or_artifact_execution(
     v2_runtime,
 ):

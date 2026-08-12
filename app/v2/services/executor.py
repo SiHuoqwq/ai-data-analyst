@@ -200,7 +200,7 @@ class AnalysisExecutor:
                 "monthly_trend": {"table"},
                 "identify_underperforming": {"table"},
                 "create_chart": {"chart"},
-                "chart_planning": {"chart"},
+                "chart_planning": set(),
             }
             for planned_step in plan.steps:
                 if (
@@ -262,6 +262,11 @@ class AnalysisExecutor:
                     )
                     prior_results[provider_step.step_id] = tool_result
                     drafts = tool_result.drafts
+                    if (
+                        provider_step.operation == "chart_planning"
+                        and drafts
+                    ):
+                        expected_artifact_types.add("chart")
                 elif provider_step.arguments is not None:
                     tool_rounds += 1
                     if tool_rounds > max_tool_rounds:

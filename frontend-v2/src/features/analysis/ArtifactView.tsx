@@ -76,8 +76,31 @@ export function TableArtifactView({ artifact }: { artifact: AnalysisArtifact }) 
   if (!payload.rows.length) {
     return <div className="artifact-empty">这项分析没有返回可展示的数据行</div>
   }
+  const singleRow = payload.rows.length === 1 ? payload.rows[0] : null
+  const identityColumns = singleRow
+    ? payload.columns.filter((column) => column.data_type !== 'number')
+    : []
+  const metricColumns = singleRow
+    ? payload.columns.filter((column) => column.data_type === 'number')
+    : []
+  const identity = identityColumns.length
+    ? identityColumns.map((column) => formatCell(singleRow?.[column.key])).join(' / ')
+    : '当前对象'
   return <section className="artifact artifact-table">
     <div className="artifact-heading"><h3>{artifact.title}</h3><span>{payload.rows.length} 行</span></div>
+    {singleRow && <section className="single-object-summary" aria-labelledby={`single-object-${artifact.id}`}>
+      <div className="single-object-heading">
+        <div><span>当前对象</span><strong>{identity}</strong></div>
+        <h4 id={`single-object-${artifact.id}`}>单对象概览</h4>
+      </div>
+      {metricColumns.length > 0 && <dl className="single-object-metrics">
+        {metricColumns.map((column) => <div key={column.key}>
+          <dt>{column.label}</dt>
+          <dd>{formatCell(singleRow[column.key])}</dd>
+        </div>)}
+      </dl>}
+      <p>当前结果仅包含 1 个对象，无法进行组间比较。</p>
+    </section>}
     <div className="table-scroll">
       <table>
         <caption className="sr-only">{artifact.title}</caption>

@@ -57,13 +57,31 @@ describe('ArtifactView', () => {
     })} />)
 
     expect(screen.getByRole('columnheader', { name: '地区' })).toBeInTheDocument()
-    expect(screen.getByText('1,280')).toBeInTheDocument()
+    expect(screen.getAllByText('1,280')).toHaveLength(2)
 
     rerender(<ArtifactView artifact={artifact('table', {
       columns: [{ key: 'region', label: '地区', data_type: 'string' }],
       rows: [],
     })} />)
     expect(screen.getByText('这项分析没有返回可展示的数据行')).toBeInTheDocument()
+  })
+
+  it('renders a compact summary without claiming a comparison for one row', () => {
+    render(<ArtifactView artifact={artifact('table', {
+      columns: [
+        { key: 'category', label: '课程类别', data_type: 'string' },
+        { key: 'enrollment_count', label: '报名人数', data_type: 'number' },
+        { key: 'completion_rate', label: '平均完成率', data_type: 'number' },
+      ],
+      rows: [{ category: 'AI 应用', enrollment_count: 153, completion_rate: 0.512 }],
+    })} />)
+
+    expect(screen.getByRole('heading', { name: '单对象概览' })).toBeInTheDocument()
+    expect(screen.getAllByText('AI 应用').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('报名人数')).toHaveLength(2)
+    expect(screen.getAllByText('153')).toHaveLength(2)
+    expect(screen.getByText('当前结果仅包含 1 个对象，无法进行组间比较。')).toBeInTheDocument()
+    expect(screen.getByRole('table', { name: '分析结果' })).toBeInTheDocument()
   })
 
   it('renders a chart with accessible enlargement and failure recovery', () => {
