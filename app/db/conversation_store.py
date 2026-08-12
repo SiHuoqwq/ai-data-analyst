@@ -1,5 +1,6 @@
 import uuid
 import os
+from sqlalchemy.orm import selectinload
 from app.db.database import SessionLocal
 from app.db.models import ConversationModel, MessageModel, ChartModel
 
@@ -108,6 +109,7 @@ def get_conversations_for_file(file_id: str) -> list[ConversationModel]:
     db = SessionLocal()
     convs = (
         db.query(ConversationModel)
+        .options(selectinload(ConversationModel.messages))
         .filter(ConversationModel.file_id == file_id)
         .order_by(ConversationModel.created_at.desc())
         .all()

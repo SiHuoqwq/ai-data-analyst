@@ -2,7 +2,6 @@ from fastapi import APIRouter, HTTPException
 from app.db.conversation_store import (
     get_conversations_for_file,
     get_conversation_with_messages,
-    count_messages,
 )
 from app.models.chat import ConversationItem, ConversationDetail, MessageItem
 
@@ -19,7 +18,15 @@ def list_conversations(file_id: str):
             title=c.title,
             mode=c.mode,
             created_at=c.created_at,
-            message_count=count_messages(c.id),
+            message_count=len(c.messages),
+            user_questions=[
+                message.content
+                for message in sorted(
+                    c.messages,
+                    key=lambda item: (item.created_at, item.id),
+                )
+                if message.role == "user"
+            ],
         )
         for c in convs
     ]

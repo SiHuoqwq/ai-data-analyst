@@ -1,4 +1,5 @@
 import time
+from datetime import datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -83,6 +84,48 @@ def test_create_conversation_uses_default_title_and_creates_no_messages(fake_cli
 def test_create_conversation_accepts_custom_title(fake_client):
     conversation = create_conversation(fake_client, title="季度销售复盘")
     assert conversation["title"] == "季度销售复盘"
+
+
+def test_conversation_list_returns_ordered_user_questions_only(fake_client):
+    conversation = create_conversation(fake_client, title="多轮课程分析")
+    started_at = datetime(2026, 8, 13, 9, 0, 0)
+    session = database.SessionLocal()
+    session.add_all([
+        MessageModel(
+            id="question-2",
+            conv_id=conversation["id"],
+            role="user",
+            content="第二个问题",
+            created_at=started_at + timedelta(minutes=2),
+        ),
+        MessageModel(
+            id="answer-1",
+            conv_id=conversation["id"],
+            role="assistant",
+            content="不应出现在问题列表中的回答",
+            created_at=started_at + timedelta(minutes=1),
+        ),
+        MessageModel(
+            id="question-1",
+            conv_id=conversation["id"],
+            role="user",
+            content="第一个问题",
+            created_at=started_at,
+        ),
+    ])
+    session.commit()
+    session.close()
+
+    response = fake_client.get(
+        f"/api/v1/files/file-1/conversations"
+    )
+
+    assert response.status_code == 200
+    listed = next(
+        item for item in response.json() if item["id"] == conversation["id"]
+    )
+    assert listed["message_count"] == 3
+    assert listed["user_questions"] == ["第一个问题", "第二个问题"]
 
 
 def test_create_conversation_rejects_missing_file_with_uniform_error(fake_client):

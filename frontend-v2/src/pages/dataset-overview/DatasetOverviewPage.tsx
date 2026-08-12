@@ -16,8 +16,31 @@ import { DataTable } from '../../components/data-table/DataTable'
 import { MarkdownContent } from '../../components/feedback/MarkdownContent'
 import { getPreviewMessage } from '../../features/datasets/preview-message'
 import type { LucideIcon } from 'lucide-react'
+import type { ConversationItem } from '../../types/api'
 
 type MetricDefinition = [label: string, value: number, icon: LucideIcon, note: string]
+
+function ConversationRow({ conversation, fileId }: { conversation: ConversationItem, fileId: string }) {
+  const [expanded, setExpanded] = useState(false)
+  const questions = expanded ? conversation.user_questions : conversation.user_questions.slice(0, 4)
+  return <article className="conversation-row">
+    <Link className="conversation-row-link" to={`/datasets/${fileId}/analysis?conversationId=${conversation.id}`}>
+      <div className="conversation-row-heading">
+        <strong>{conversation.title}</strong>
+        <span>{formatDate(conversation.created_at)} · {formatNumber(conversation.message_count)} 条消息</span>
+      </div>
+      {questions.length > 0
+        ? <ol className="conversation-questions">{questions.map((question, index) => <li key={`${index}-${question}`}>{question}</li>)}</ol>
+        : <p className="conversation-empty">暂无可展示的问题</p>}
+    </Link>
+    {conversation.user_questions.length > 4 && <button
+      className="conversation-toggle"
+      type="button"
+      aria-expanded={expanded}
+      onClick={() => setExpanded((value) => !value)}
+    >{expanded ? '收起问题' : `查看全部 ${conversation.user_questions.length} 个问题`}</button>}
+  </article>
+}
 
 export function DatasetOverviewPage() {
   const { fileId = '' } = useParams()
@@ -59,7 +82,7 @@ export function DatasetOverviewPage() {
         {conversations.isPending && <LoadingState label="正在读取会话" />}
         {conversations.isError && <ErrorState error={conversations.error} onRetry={() => void conversations.refetch()} />}
         {conversations.data?.length === 0 && <EmptyState title="暂无分析记录" description="分析工作台开放后，可以在这里继续之前的分析。" compact />}
-        {conversations.data?.map((conversation) => <Link className="conversation-row" key={conversation.id} to={`/datasets/${fileId}/analysis?conversationId=${conversation.id}`}><strong>{conversation.title}</strong><span>{formatDate(conversation.created_at)} · {formatNumber(conversation.message_count)} 条消息</span></Link>)}
+        {conversations.data?.map((conversation) => <ConversationRow conversation={conversation} fileId={fileId} key={conversation.id} />)}
       </Card>
       <Card><details><summary><span><span className="eyebrow">数据质量报告</span><strong>查看报告详情</strong></span><span>展开</span></summary><MarkdownContent content={data.profile_report} /></details></Card>
       <Card><div className="card-heading"><div><span className="eyebrow">数据预览</span><h2>前 20 行</h2></div></div>

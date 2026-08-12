@@ -39,6 +39,7 @@ export interface ConversationItem {
   mode: string
   created_at: string
   message_count: number
+  user_questions: string[]
 }
 
 export interface HealthResponse {

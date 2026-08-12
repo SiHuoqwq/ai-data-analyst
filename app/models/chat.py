@@ -1,5 +1,5 @@
 from datetime import datetime
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ChatRequest(BaseModel):
@@ -43,6 +43,7 @@ class ConversationItem(BaseModel):
     mode: str
     created_at: datetime
     message_count: int
+    user_questions: list[str] = Field(default_factory=list)
 
     class Config:
         from_attributes = True
