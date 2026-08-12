@@ -21,6 +21,10 @@ from app.v2.services.analytics import (
 from app.v2.services.chart_planner import ChartPlanner, ChartPlanningError
 from app.v2.services.events import EventEmitter
 from app.v2.services.evidence import EvidenceRegistry
+from app.v2.services.field_requirements import (
+    MissingRequiredFieldsError,
+    RequiredFieldGuard,
+)
 from app.v2.services.deterministic_renderer import (
     DeterministicGroundedAnswerRenderer,
 )
@@ -45,6 +49,7 @@ class AnalysisExecutor:
         plan_compiler: PlanCompiler | None = None,
         chart_planner: ChartPlanner | None = None,
         intent_router: ControlledIntentRouter | None = None,
+        field_guard: RequiredFieldGuard | None = None,
         trusted_intent: AnalysisIntent | None = None,
     ):
         self.provider = provider
@@ -55,6 +60,7 @@ class AnalysisExecutor:
         self.plan_compiler = plan_compiler or PlanCompiler()
         self.chart_planner = chart_planner or ChartPlanner()
         self.intent_router = intent_router or ControlledIntentRouter()
+        self.field_guard = field_guard or RequiredFieldGuard()
         self.trusted_intent = trusted_intent
         self.run_service = AnalysisRunService(self.events)
 
@@ -89,6 +95,7 @@ class AnalysisExecutor:
 
             file_record = session.get(FileModel, run.dataset_version_id)
             question = session.get(MessageModel, run.trigger_message_id).content
+            self.field_guard.validate(question, file_record.columns_info)
             history = (
                 session.query(MessageModel)
                 .filter(
@@ -624,6 +631,11 @@ class AnalysisExecutor:
                 if isinstance(exc, ProviderError):
                     error_code = exc.code
                     error_message = exc.user_message
+                    retryable = exc.retryable
+                    error_details = exc.details
+                elif isinstance(exc, MissingRequiredFieldsError):
+                    error_code = exc.code
+                    error_message = exc.message
                     retryable = exc.retryable
                     error_details = exc.details
                 elif isinstance(exc, ToolExecutionError):

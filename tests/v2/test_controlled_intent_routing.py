@@ -68,6 +68,20 @@ class ValidIntentProvider(InvalidIntentProvider):
         )
 
 
+class CountingTeacherFallbackProvider(ValidIntentProvider):
+    def __init__(self):
+        super().__init__("model")
+        self.history_calls = 0
+        self.intent_calls = 0
+
+    def set_history(self, _history):
+        self.history_calls += 1
+
+    def generate_intent(self, question, file_record):
+        self.intent_calls += 1
+        return super().generate_intent(question, file_record)
+
+
 def _prepare_dataset(v2_runtime):
     csv_path = Path(v2_runtime["database_path"]).with_name(
         "controlled-intent-courses.csv"
@@ -415,6 +429,49 @@ def test_unsupported_fallback_executes_no_tools_or_assistant_message(
         session.query(RunStepModel).filter_by(run_id=run.id).count()
         == 0
     )
+    assert (
+        session.query(MessageModel)
+        .filter_by(conv_id="conversation-1", role="assistant")
+        .count()
+        == 0
+    )
+    session.close()
+
+
+def test_missing_teacher_fields_refuses_before_provider_or_artifact_execution(
+    v2_runtime,
+):
+    _prepare_dataset(v2_runtime)
+    question = (
+        "请分析不同教师的授课质量对课程完成率、课程评分和退款率的影响，"
+        "并找出表现最好和最需要优化的教师"
+    )
+    run = AnalysisRunService().create_run(
+        "conversation-1",
+        "file-1",
+        question,
+        "missing-teacher-fields",
+    )
+    provider = CountingTeacherFallbackProvider()
+
+    AnalysisExecutor(provider).execute(run.id)
+
+    session = database.SessionLocal()
+    failed = session.get(AnalysisRunModel, run.id)
+    assert failed.status == "failed"
+    assert failed.failure_json == {
+        "code": "MISSING_REQUIRED_FIELDS",
+        "message": (
+            "当前数据无法回答教师维度问题：缺少教师姓名、教师ID或授课教师字段。"
+            "如需衡量授课质量，请同时补充教师评分或其他可验证的质量指标。"
+        ),
+        "retryable": False,
+        "failed_step_id": None,
+    }
+    assert provider.history_calls == 0
+    assert provider.intent_calls == 0
+    assert session.query(RunStepModel).filter_by(run_id=run.id).count() == 0
+    assert session.query(ArtifactModel).filter_by(run_id=run.id).count() == 0
     assert (
         session.query(MessageModel)
         .filter_by(conv_id="conversation-1", role="assistant")
