@@ -48,6 +48,7 @@ class DeterministicGroundedAnswerRenderer:
             for item in self._representative_items(registry.items)
         )
         lines.extend(self._trend_findings(registry.items))
+        lines.extend(self._underperforming_findings(registry.items))
 
         generated = [
             label
@@ -77,7 +78,7 @@ class DeterministicGroundedAnswerRenderer:
                 "## 数据限制",
                 "",
                 "- 缺失值沿用分析工具的既定处理规则。",
-                "- 课程评分等均值只使用非空记录计算。",
+                "- 成交金额等汇总值只使用非空记录计算。",
                 "- 当前结果反映数据关联，不代表因果关系。",
                 "- 表格或图表可能仅展示重点结果；趋势判断使用本次工具返回的完整聚合数据。",
             ]
@@ -111,7 +112,7 @@ class DeterministicGroundedAnswerRenderer:
         selected_keys: set[str] = set()
 
         # Always cover the principal semantic units before filling by source.
-        for unit in ("count", "percentage", "currency", "score", "number"):
+        for unit in ("count", "percentage", "currency", "number"):
             item = next((item for item in items if item.unit == unit), None)
             if item is not None:
                 selected.append(item)
@@ -222,26 +223,6 @@ class DeterministicGroundedAnswerRenderer:
             ),
             None,
         )
-        refund = next(
-            (
-                item
-                for item in items
-                if "退款率" in item.label and item.unit == "percentage"
-            ),
-            None,
-        )
-        mobile = next(
-            (
-                item
-                for item in items
-                if "完成率" in item.label
-                and any(
-                    value in {"Android", "iPhone", "iPad"}
-                    for value in item.dimensions.values()
-                )
-            ),
-            None,
-        )
         monthly = next(
             (
                 item
@@ -253,37 +234,80 @@ class DeterministicGroundedAnswerRenderer:
         if underperforming:
             recommendations.append(
                 (
-                    "针对高报名且完成表现偏低的组合增加阶段提醒、"
-                    "学习路径拆分和针对性辅导。",
+                    "针对高线索量、低成交转化的组合，重点排查到访与认购环节"
+                    "的转化瓶颈并优化跟进节奏。",
                     underperforming,
-                )
-            )
-        if refund:
-            recommendations.append(
-                (
-                    "结合退款表现检查渠道承诺、课程匹配和购买前说明。",
-                    refund,
-                )
-            )
-        if mobile:
-            recommendations.append(
-                (
-                    "结合移动设备完成表现优化移动端学习体验和短时学习内容。",
-                    mobile,
                 )
             )
         if monthly:
             recommendations.append(
                 (
-                    "结合月度变化检查同期渠道、课程供给和运营活动。",
+                    "结合月度变化检查同期获客渠道投放节奏与推盘安排。",
                     monthly,
                 )
             )
         if not recommendations:
             recommendations.append(
                 (
-                    "持续跟踪重点分组，并结合结构化结果安排后续运营动作。",
+                    "持续跟踪重点分组，并结合结构化结果安排后续销售跟进动作。",
                     items[0],
                 )
             )
         return recommendations[:4]
+
+    @staticmethod
+    def _underperforming_findings(
+        items: tuple[EvidenceItem, ...],
+    ) -> list[str]:
+        underperforming = [
+            item
+            for item in items
+            if item.source_tool == "identify_underperforming"
+        ]
+        if not underperforming:
+            return []
+
+        matched_groups = next(
+            (
+                item
+                for item in underperforming
+                if item.label == "matched_groups"
+            ),
+            None,
+        )
+        count = 0
+        if (
+            matched_groups is not None
+            and isinstance(matched_groups.value, (int, float))
+            and not isinstance(matched_groups.value, bool)
+        ):
+            count = int(matched_groups.value)
+
+        lines = ["", "## 低表现组合", ""]
+        if count == 0:
+            lines.append("未检测到符合条件的低表现组合。")
+            return lines
+
+        lines.append(f"检测到 {count} 个高线索、低成交转化组合。")
+        lines.append("")
+
+        grouped: dict[tuple[tuple[str, str], ...], dict[str, str]] = defaultdict(dict)
+        dimension_text: dict[tuple[tuple[str, str], ...], str] = {}
+        for item in underperforming:
+            if not item.dimensions:
+                continue
+            key = tuple(sorted(item.dimensions.items()))
+            dimension_text[key] = " / ".join(item.dimensions.values())
+            field = item.label.rsplit(" · ", 1)[-1]
+            grouped[key][field] = item.display_value
+
+        for key, fields in grouped.items():
+            dim = dimension_text.get(key, "")
+            lead = fields.get("lead_count", "—")
+            deal = fields.get("deal_count", "—")
+            rate = fields.get("deal_rate", "—")
+            prefix = f"{dim}：" if dim else ""
+            lines.append(
+                f"- {prefix}线索数 {lead}，成交套数 {deal}，成交转化率 {rate}。"
+            )
+        return lines

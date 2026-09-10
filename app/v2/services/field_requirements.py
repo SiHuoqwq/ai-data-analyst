@@ -20,13 +20,31 @@ class MissingRequiredFieldsError(RuntimeError):
 
 
 class RequiredFieldGuard:
-    _teacher_question_terms = ("授课教师", "教师", "老师", "讲师")
-    _teacher_field_terms = (
-        "教师姓名",
-        "教师id",
-        "授课教师",
-        "讲师",
-        "教师评分",
+    _dimension_guards = (
+        {
+            "concept": "sales_consultant",
+            "label": "置业顾问",
+            "question_terms": ("置业顾问", "销售顾问", "顾问"),
+            "field_terms": ("置业顾问", "销售顾问", "顾问"),
+        },
+        {
+            "concept": "project_name",
+            "label": "项目",
+            "question_terms": ("项目", "楼盘"),
+            "field_terms": ("项目", "楼盘"),
+        },
+        {
+            "concept": "lead_channel",
+            "label": "获客渠道",
+            "question_terms": ("获客渠道", "渠道", "客户来源", "线索来源"),
+            "field_terms": ("获客渠道", "渠道", "客户来源", "线索来源"),
+        },
+        {
+            "concept": "property_type",
+            "label": "户型",
+            "question_terms": ("户型", "房型"),
+            "field_terms": ("户型", "房型"),
+        },
     )
 
     def validate(
@@ -35,36 +53,34 @@ class RequiredFieldGuard:
         columns_info: list[dict[str, Any]] | None,
     ) -> None:
         normalized_question = self._normalize(question)
-        if not any(
-            term in normalized_question
-            for term in self._teacher_question_terms
-        ):
-            return
-
         normalized_columns = {
             self._normalize(str(item.get("name", "")))
             for item in (columns_info or [])
         }
-        if any(
-            any(term in column for term in self._teacher_field_terms)
-            for column in normalized_columns
-        ):
-            return
-
-        message = (
-            "当前数据无法回答教师维度问题：缺少教师姓名、教师ID或授课教师字段。"
-            "如需衡量授课质量，请同时补充教师评分或其他可验证的质量指标。"
-        )
-        raise MissingRequiredFieldsError(
-            "MISSING_REQUIRED_FIELDS",
-            message,
-            retryable=False,
-            details={
-                "concept": "teacher",
-                "required_fields": ["教师姓名", "教师ID", "授课教师"],
-                "recommended_fields": ["教师评分"],
-            },
-        )
+        for guard in self._dimension_guards:
+            if not any(
+                term in normalized_question
+                for term in guard["question_terms"]
+            ):
+                continue
+            if any(
+                any(term in column for term in guard["field_terms"])
+                for column in normalized_columns
+            ):
+                continue
+            label = guard["label"]
+            raise MissingRequiredFieldsError(
+                "MISSING_REQUIRED_FIELDS",
+                (
+                    f"当前数据中缺少「{label}」字段，"
+                    f"因此暂时无法进行{label}维度分析。"
+                ),
+                retryable=False,
+                details={
+                    "concept": guard["concept"],
+                    "required_fields": [guard["field_terms"][0]],
+                },
+            )
 
     @staticmethod
     def _normalize(value: str) -> str:

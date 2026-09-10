@@ -18,15 +18,15 @@ def evidence_payload():
             "artifact_id": "4a405bae-50e7-46ab-a195-9630d03736fb",
             "artifact_type": "table",
             "source_tool": "group_aggregate",
-            "title": "课程汇总",
+            "title": "渠道汇总",
             "summary": {"scanned_rows": 321},
             "preview": [
                 {
-                    "课程类别": "AI 应用",
-                    "报名人数": 153,
-                    "平均完成率": 0.5121,
-                    "实付金额": 12345.6,
-                    "平均课程评分": 4.25,
+                    "lead_channel": "线上投放",
+                    "lead_count": 153,
+                    "deal_rate": 0.5121,
+                    "deal_amount_sum": 12345.6,
+                    "avg_deal_amount": 425000.0,
                 }
             ],
             "warnings": [],
@@ -37,23 +37,23 @@ def evidence_payload():
 def conclusion_for(keys: list[str]) -> StructuredConclusion:
     return StructuredConclusion.model_validate(
         {
-            "headline": "课程运营表现",
-            "overview": "AI 应用课程仍有提升空间。",
+            "headline": "渠道成交表现",
+            "overview": "线上投放渠道成交转化仍有提升空间。",
             "findings": [
                 {
                     "title": "主要发现",
-                    "statement": "AI 应用课程完成表现偏弱。",
+                    "statement": "线上投放渠道成交转化表现偏弱。",
                     "evidence_refs": keys,
                 }
             ],
             "recommendations": [
                 {
-                    "action": "增加分阶段学习提醒。",
-                    "reason": "该课程类别需要重点运营。",
+                    "action": "进一步检查该渠道的到访与认购环节。",
+                    "reason": "该渠道线索量较高但成交转化偏低。",
                     "evidence_refs": keys[:1],
                 }
             ],
-            "limitations": ["评分均值仅基于非空记录计算。"],
+            "limitations": ["转化率均值仅基于非空记录计算。"],
         }
     )
 
@@ -65,14 +65,15 @@ def test_registry_formats_structured_business_units():
     )
 
     by_label = {item.label: item for item in registry.items}
-    assert by_label["AI 应用 · 报名人数"].unit == "count"
-    assert by_label["AI 应用 · 报名人数"].display_value == "153 人"
-    assert by_label["AI 应用 · 平均完成率"].unit == "percentage"
-    assert by_label["AI 应用 · 平均完成率"].display_value == "51.21%"
-    assert by_label["AI 应用 · 实付金额"].unit == "currency"
-    assert by_label["AI 应用 · 实付金额"].display_value == "¥12,345.60"
-    assert by_label["AI 应用 · 平均课程评分"].unit == "score"
-    assert by_label["AI 应用 · 平均课程评分"].display_value == "4.25 分"
+    assert by_label["线上投放 · lead_count"].unit == "count"
+    assert by_label["线上投放 · lead_count"].display_value == "153"
+    assert by_label["线上投放 · deal_rate"].unit == "percentage"
+    assert by_label["线上投放 · deal_rate"].display_value == "51.21%"
+    assert by_label["线上投放 · deal_amount_sum"].unit == "currency"
+    assert by_label["线上投放 · deal_amount_sum"].display_value == "¥12,345.60"
+    # avg_deal_amount 虽为派生指标，但单位必须是货币，不能显示成百分比。
+    assert by_label["线上投放 · avg_deal_amount"].unit == "currency"
+    assert by_label["线上投放 · avg_deal_amount"].display_value == "¥425,000.00"
     assert len({item.key for item in registry.items}) == len(registry.items)
 
 
@@ -124,7 +125,7 @@ def test_conclusion_requires_evidence_for_each_finding():
 
 def test_conclusion_rejects_model_authored_business_numbers():
     payload = conclusion_for(["placeholder"]).model_dump()
-    payload["findings"][0]["statement"] = "完成率为 51.21%。"
+    payload["findings"][0]["statement"] = "成交转化率为 51.21%。"
 
     with pytest.raises(ValidationError):
         StructuredConclusion.model_validate(payload)
@@ -152,8 +153,8 @@ def test_renderer_injects_values_without_internal_keys_or_uuids():
         aliases,
     )
 
-    assert "# 课程运营表现" in markdown
-    assert "153 人" in markdown
+    assert "# 渠道成交表现" in markdown
+    assert "153" in markdown
     assert "51.21%" in markdown
     assert "evidence." not in markdown
     assert "e1" not in markdown
@@ -170,17 +171,17 @@ def test_deterministic_renderer_uses_complete_monthly_trend_signals():
             "summary": {
                 "trend_signals": {
                     "by_metric": {
-                        "报名人数": {
+                        "线索数": {
                             "fastest_growth": {
-                                "category": "职场英语",
+                                "category": "线上投放",
                                 "change_rate": 1.0,
                             },
                             "largest_decline": {
-                                "category": "AI 应用",
+                                "category": "渠道分销",
                                 "change_rate": -0.6,
                             },
                             "most_volatile": {
-                                "category": "商业分析",
+                                "category": "自然到访",
                                 "change_rate_stddev": 1.466112,
                             },
                         }
@@ -190,13 +191,13 @@ def test_deterministic_renderer_uses_complete_monthly_trend_signals():
             "preview": [
                 {
                     "月份": "2025-01",
-                    "课程类别": "AI 应用",
-                    "报名人数": 10,
+                    "lead_channel": "线上投放",
+                    "lead_count": 10,
                 },
                 {
                     "月份": "2026-06",
-                    "课程类别": "AI 应用",
-                    "报名人数": 4,
+                    "lead_channel": "线上投放",
+                    "lead_count": 4,
                 },
             ],
             "warnings": [],
@@ -209,9 +210,71 @@ def test_deterministic_renderer_uses_complete_monthly_trend_signals():
         {"table", "chart"},
     )
 
-    assert "报名人数增长最快的类别为职场英语：100.00%" in markdown
-    assert "报名人数下降最大的类别为AI 应用：-60.00%" in markdown
-    assert "报名人数波动最大的类别为商业分析：146.61%" in markdown
+    assert "线索数增长最快的类别为线上投放：100.00%" in markdown
+    assert "线索数下降最大的类别为渠道分销：-60.00%" in markdown
+    assert "线索数波动最大的类别为自然到访：146.61%" in markdown
+
+
+def test_deterministic_renderer_expresses_underperforming_groups():
+    evidence = [
+        {
+            "artifact_id": "underperforming-table",
+            "artifact_type": "table",
+            "source_tool": "identify_underperforming",
+            "title": "高线索量低成交转化率组合",
+            "summary": {"matched_groups": 2},
+            "preview": [
+                {
+                    "dimension_1": "线上投放",
+                    "lead_count": 153,
+                    "deal_count": 32,
+                    "deal_rate": 0.209,
+                },
+                {
+                    "dimension_1": "渠道分销",
+                    "lead_count": 120,
+                    "deal_count": 18,
+                    "deal_rate": 0.15,
+                },
+            ],
+            "warnings": [],
+        }
+    ]
+    registry = EvidenceRegistry.from_tool_evidence("run-underperforming", evidence)
+
+    markdown = DeterministicGroundedAnswerRenderer().render(
+        registry,
+        {"table"},
+    )
+
+    assert "检测到 2 个高线索、低成交转化组合。" in markdown
+    assert "线上投放" in markdown
+    assert "线索数 153" in markdown
+    assert "成交套数 32" in markdown
+    assert "成交转化率 20.90%" in markdown
+    assert "渠道分销" in markdown
+
+
+def test_deterministic_renderer_reports_no_underperforming_groups():
+    evidence = [
+        {
+            "artifact_id": "underperforming-table",
+            "artifact_type": "table",
+            "source_tool": "identify_underperforming",
+            "title": "高线索量低成交转化率组合",
+            "summary": {"matched_groups": 0},
+            "preview": [],
+            "warnings": [],
+        }
+    ]
+    registry = EvidenceRegistry.from_tool_evidence("run-underperforming", evidence)
+
+    markdown = DeterministicGroundedAnswerRenderer().render(
+        registry,
+        {"table"},
+    )
+
+    assert "未检测到符合条件的低表现组合。" in markdown
 
 
 def test_compact_aliases_are_stable_and_bound_to_the_current_run():

@@ -162,6 +162,7 @@ def test_group_compiler_includes_underperforming_step():
     ]
     assert [item.id for item in underperforming.output_schema.metrics] == [
         "lead_count",
+        "deal_count",
         "deal_rate",
     ]
 

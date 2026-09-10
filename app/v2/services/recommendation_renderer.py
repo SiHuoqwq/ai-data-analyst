@@ -2,7 +2,7 @@ import hashlib
 import unicodedata
 
 from app.db.models import FileModel
-from app.v2.domain.learning_registry import LearningDomainRegistry
+from app.v2.domain.real_estate_registry import RealEstateDomainRegistry
 from app.v2.schemas.intents import AnalysisIntent
 from app.v2.schemas.recommendations import RecommendationCandidate
 
@@ -10,8 +10,8 @@ from app.v2.schemas.recommendations import RecommendationCandidate
 class DeterministicRecommendationRenderer:
     """Render public copy from validated intent structure, never model prose."""
 
-    def __init__(self, registry: LearningDomainRegistry | None = None):
-        self.registry = registry or LearningDomainRegistry()
+    def __init__(self, registry: RealEstateDomainRegistry | None = None):
+        self.registry = registry or RealEstateDomainRegistry()
 
     def render(
         self,
@@ -25,14 +25,13 @@ class DeterministicRecommendationRenderer:
         ]
         dimension = ", ".join(dimensions) or "selected field"
         if candidate.intent_type == "monthly_trend":
-            date = self._field_slot(intent.date_field or "date", file_record)
             return (
                 f"{dimension}月度趋势",
-                f"按{date}月份查看{dimension}的变化趋势",
+                f"查看{dimension}各月份的变化趋势",
             )
         return (
             f"按{dimension}比较",
-            f"不同{dimension}的关键指标表现有何差异？",
+            f"比较不同{dimension}的关键指标表现有何差异？",
         )
 
     def _field_slot(self, field: str, file_record: FileModel) -> str:

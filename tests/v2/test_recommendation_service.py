@@ -6,11 +6,6 @@ from time import monotonic, sleep
 import pytest
 from sqlalchemy.exc import IntegrityError
 
-
-pytestmark = pytest.mark.skip(
-    reason="RE-3：推荐服务仍绑定教育领域语义，待房地产推荐语义迁移"
-)
-
 from app.db import database
 from app.db.models import FileModel
 from app.v2.db.models import DatasetRecommendationModel, utc_now
@@ -174,25 +169,23 @@ def test_sensitive_compound_scanning_is_bounded_for_thousand_token_fields():
     [
         (
             [
-                {"name": "课程类别", "dtype": "object"},
-                {"name": "报名日期", "dtype": "datetime64[ns]"},
-                {"name": "实付金额", "dtype": "int64"},
-                {"name": "课程完成率", "dtype": "int64"},
-                {"name": "课程评分", "dtype": "int64"},
+                {"name": "获客渠道", "dtype": "object"},
+                {"name": "线索日期", "dtype": "datetime64[ns]"},
+                {"name": "成交金额", "dtype": "int64"},
+                {"name": "回款金额", "dtype": "int64"},
             ],
-            ["课程类别", "课程完成率"],
-            ["课程类别", "报名日期", "实付金额"],
+            ["获客渠道", "成交金额"],
+            ["获客渠道", "线索日期", "成交金额"],
         ),
         (
             [
-                {"name": "category", "dtype": "object"},
-                {"name": "enrollment_date", "dtype": "datetime64[ns]"},
-                {"name": "paid_amount", "dtype": "int64"},
-                {"name": "completion_rate", "dtype": "int64"},
-                {"name": "rating", "dtype": "int64"},
+                {"name": "lead_channel", "dtype": "object"},
+                {"name": "lead_date", "dtype": "datetime64[ns]"},
+                {"name": "deal_amount", "dtype": "int64"},
+                {"name": "payment_amount", "dtype": "int64"},
             ],
-            ["category", "completion_rate"],
-            ["category", "enrollment_date", "paid_amount"],
+            ["lead_channel", "deal_amount"],
+            ["lead_channel", "lead_date", "deal_amount"],
         ),
     ],
 )
@@ -247,11 +240,11 @@ def test_cache_miss_validates_and_persists_one_model_candidate_per_intent(
     ]
     assert result.recommendations[0]["label"] == "按field-1-edb2cd3b比较"
     assert result.recommendations[0]["question"] == (
-        "不同field-1-edb2cd3b的关键指标表现有何差异？"
+        "比较不同field-1-edb2cd3b的关键指标表现有何差异？"
     )
     assert result.recommendations[1]["label"] == "field-1-edb2cd3b月度趋势"
     assert result.recommendations[1]["question"] == (
-        "按field-2-8166447c月份查看field-1-edb2cd3b的变化趋势"
+        "查看field-1-edb2cd3b各月份的变化趋势"
     )
     assert provider.calls == 1
     session = database.SessionLocal()
@@ -521,7 +514,7 @@ def test_model_selection_uses_server_owned_public_copy(
     assert recommendation["intent_type"] == "group_comparison"
     assert recommendation["label"] == "按field-1-edb2cd3b比较"
     assert recommendation["question"] == (
-        "不同field-1-edb2cd3b的关键指标表现有何差异？"
+        "比较不同field-1-edb2cd3b的关键指标表现有何差异？"
     )
     assert recommendation["referenced_fields"] == [
         "category",
@@ -625,16 +618,16 @@ def test_single_token_chinese_nonregistry_field_uses_stable_public_alias(
         dataset_id="dataset-custom-chinese-field",
         columns=[
             {"name": "自定义字段", "dtype": "object"},
-            {"name": "课程完成率", "dtype": "float64"},
+            {"name": "自定义指标", "dtype": "float64"},
         ],
-        content="自定义字段,课程完成率\n甲,0.8\n乙,0.7\n",
+        content="自定义字段,自定义指标\n甲,0.8\n乙,0.7\n",
     )
     provider = StubProvider(
         RecommendationGeneration(
             candidates=[
                 RecommendationCandidate(
                     intent_type="group_comparison",
-                    referenced_fields=["自定义字段", "课程完成率"],
+                    referenced_fields=["自定义字段", "自定义指标"],
                 )
             ]
         )
@@ -661,17 +654,17 @@ def test_legitimate_chinese_recommendation_and_public_fields_remain_usable(
         tmp_path,
         dataset_id="dataset-safe-chinese",
         columns=[
-            {"name": "课程类别", "dtype": "object"},
-            {"name": "课程完成率", "dtype": "float64"},
+            {"name": "获客渠道", "dtype": "object"},
+            {"name": "成交金额", "dtype": "float64"},
         ],
-        content="课程类别,课程完成率\n数据分析,0.8\n产品设计,0.7\n",
+        content="获客渠道,成交金额\n线上投放,1500000\n渠道合作,800000\n",
     )
     provider = StubProvider(
         RecommendationGeneration(
             candidates=[
                 RecommendationCandidate(
                     intent_type="group_comparison",
-                    referenced_fields=["课程类别", "课程完成率"],
+                    referenced_fields=["获客渠道", "成交金额"],
                 )
             ]
         )
@@ -683,11 +676,11 @@ def test_legitimate_chinese_recommendation_and_public_fields_remain_usable(
 
     assert result.source == "model"
     assert result.recommendations[0]["question"] == (
-        "不同课程类别的关键指标表现有何差异？"
+        "比较不同获客渠道的关键指标表现有何差异？"
     )
     assert result.recommendations[0]["referenced_fields"] == [
-        "课程类别",
-        "课程完成率",
+        "获客渠道",
+        "成交金额",
     ]
 
 
@@ -732,10 +725,10 @@ def test_server_rendered_copy_changes_with_different_safe_field_profiles(
     channel_result = service.get_or_generate("dataset-channel", channel)
 
     assert region_result.recommendations[0]["question"] == (
-        "不同field-1-c697d298的关键指标表现有何差异？"
+        "比较不同field-1-c697d298的关键指标表现有何差异？"
     )
     assert channel_result.recommendations[0]["question"] == (
-        "不同field-1-69e36568的关键指标表现有何差异？"
+        "比较不同field-1-69e36568的关键指标表现有何差异？"
     )
     assert region_result.recommendations != channel_result.recommendations
 
@@ -797,7 +790,7 @@ def test_fake_provider_skips_model_candidates_and_uses_templates(
     assert result.source == "template"
     assert fake.calls == 0
     assert result.recommendations[0]["question"] == (
-        "不同field-1-edb2cd3b的关键指标表现有何差异？"
+        "比较不同field-1-edb2cd3b的关键指标表现有何差异？"
     )
 
     session = database.SessionLocal()
@@ -1326,14 +1319,14 @@ def test_object_registry_date_requires_locally_parseable_values(
         tmp_path,
         dataset_id="dataset-unparseable-date",
         columns=[
-            {"name": "课程类别", "dtype": "object"},
-            {"name": "报名日期", "dtype": "object"},
-            {"name": "课程完成率", "dtype": "float64"},
+            {"name": "获客渠道", "dtype": "object"},
+            {"name": "线索日期", "dtype": "object"},
+            {"name": "成交金额", "dtype": "float64"},
         ],
         content=(
-            "课程类别,报名日期,课程完成率\n"
-            "数据分析,not-a-date,0.82\n"
-            "产品设计,still-not-a-date,0.74\n"
+            "获客渠道,线索日期,成交金额\n"
+            "线上投放,not-a-date,1500000\n"
+            "渠道合作,still-not-a-date,800000\n"
         ),
     )
     fake = StubProvider(RecommendationGeneration(candidates=[]), name="fake")

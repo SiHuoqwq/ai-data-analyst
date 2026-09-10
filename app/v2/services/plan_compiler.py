@@ -486,6 +486,7 @@ class PlanCompiler:
         dimensions: list[ResultDimension],
     ) -> CompiledStep:
         lead = self.registry.metric("lead_count")
+        deal_count = self.registry.metric("deal_count")
         deal_rate = self.registry.metric("deal_rate")
         schema = ResultSchema(
             dimensions=dimensions,
@@ -497,6 +498,14 @@ class PlanCompiler:
                     aggregation="count",
                     nullable=False,
                     source_field=None,
+                ),
+                ResultMetric(
+                    id="deal_count",
+                    label=deal_count.label,
+                    unit="count",
+                    aggregation="count",
+                    nullable=True,
+                    source_field=deal_count.source_field,
                 ),
                 ResultMetric(
                     id="deal_rate",

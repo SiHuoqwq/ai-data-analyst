@@ -68,7 +68,7 @@ class ValidIntentProvider(InvalidIntentProvider):
         )
 
 
-class CountingTeacherFallbackProvider(ValidIntentProvider):
+class CountingFallbackProvider(ValidIntentProvider):
     def __init__(self):
         super().__init__("model")
         self.history_calls = 0
@@ -267,7 +267,6 @@ def test_controlled_fallback_completes_both_fixed_workflows(v2_runtime):
     session.close()
 
 
-@pytest.mark.skip(reason="RE-3：推荐服务仍绑定教育领域语义，待房地产推荐语义迁移")
 def test_fake_provider_executes_template_recommendations_as_compiled_workflows(
     v2_runtime,
 ):
@@ -321,7 +320,6 @@ def test_fake_provider_executes_template_recommendations_as_compiled_workflows(
     session.close()
 
 
-@pytest.mark.skip(reason="RE-3：推荐服务仍绑定教育领域语义，待房地产推荐语义迁移")
 def test_fake_provider_executes_each_template_for_minimal_dataset_fields(
     v2_runtime,
 ):
@@ -496,21 +494,60 @@ def test_single_group_run_completes_with_table_and_without_chart(v2_runtime):
     session.close()
 
 
-def test_missing_teacher_fields_refuses_before_provider_or_artifact_execution(
+def _prepare_dataset_without_consultant(v2_runtime):
+    csv_path = Path(v2_runtime["database_path"]).with_name(
+        "controlled-intent-no-consultant.csv"
+    )
+    header = (
+        "项目,城市,区域,获客渠道,户型,客户等级,"
+        "线索日期,到访日期,认购日期,签约日期,成交金额,回款金额"
+    )
+    rows = [
+        "云顶壹号,上海,浦东,自然到访,三居,A,2026-01-05,2026-01-06,2026-01-10,2026-01-15,1000000,500000",
+        "滨江府,杭州,西湖,渠道分销,三居,A,2026-01-06,2026-01-08,,,,",
+    ]
+    csv_path.write_text(
+        "\n".join([header, *rows]) + "\n", encoding="utf-8"
+    )
+    columns = [
+        ("项目", "object"),
+        ("城市", "object"),
+        ("区域", "object"),
+        ("获客渠道", "object"),
+        ("户型", "object"),
+        ("客户等级", "object"),
+        ("线索日期", "datetime64[ns]"),
+        ("到访日期", "datetime64[ns]"),
+        ("认购日期", "datetime64[ns]"),
+        ("签约日期", "datetime64[ns]"),
+        ("成交金额", "float64"),
+        ("回款金额", "float64"),
+    ]
+    session = database.SessionLocal()
+    file_record = session.get(FileModel, "file-1")
+    file_record.filepath = str(csv_path)
+    file_record.filename = csv_path.name
+    file_record.row_count = len(rows)
+    file_record.col_count = len(columns)
+    file_record.columns_info = [
+        {"name": name, "dtype": dtype} for name, dtype in columns
+    ]
+    session.commit()
+    session.close()
+
+
+def test_missing_sales_consultant_fields_refuse_before_provider_or_artifact_execution(
     v2_runtime,
 ):
-    _prepare_dataset(v2_runtime)
-    question = (
-        "请分析不同教师的授课质量对课程完成率、课程评分和退款率的影响，"
-        "并找出表现最好和最需要优化的教师"
-    )
+    _prepare_dataset_without_consultant(v2_runtime)
+    question = "请分析各置业顾问的成交套数和成交金额排名"
     run = AnalysisRunService().create_run(
         "conversation-1",
         "file-1",
         question,
-        "missing-teacher-fields",
+        "missing-consultant-fields",
     )
-    provider = CountingTeacherFallbackProvider()
+    provider = CountingFallbackProvider()
 
     AnalysisExecutor(provider).execute(run.id)
 
@@ -520,8 +557,8 @@ def test_missing_teacher_fields_refuses_before_provider_or_artifact_execution(
     assert failed.failure_json == {
         "code": "MISSING_REQUIRED_FIELDS",
         "message": (
-            "当前数据无法回答教师维度问题：缺少教师姓名、教师ID或授课教师字段。"
-            "如需衡量授课质量，请同时补充教师评分或其他可验证的质量指标。"
+            "当前数据中缺少「置业顾问」字段，"
+            "因此暂时无法进行置业顾问维度分析。"
         ),
         "retryable": False,
         "failed_step_id": None,

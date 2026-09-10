@@ -767,7 +767,9 @@ class StructuredAnalysisTools:
         deal_rate = deal_rate.replace(
             [float("inf"), float("-inf")], float("nan")
         )
-        result = pd.concat([lead_count, deal_rate], axis=1).reset_index()
+        result = pd.concat(
+            [lead_count, conversion_count, deal_rate], axis=1
+        ).reset_index()
         eligible = result[
             result["lead_count"] >= validated["min_sample_size"]
         ].copy()

@@ -53,26 +53,26 @@ DOMAIN_INTENT_EXAMPLES = [
     {
         "workflow": "group_comparison",
         "dimensions": [
-            "course_category",
-            "course_difficulty",
-            "purchase_channel",
-            "primary_device",
+            "lead_channel",
+            "project_name",
+            "sales_consultant",
+            "property_type",
         ],
         "metric_ids": [
-            "enrollment_count",
-            "completion_rate",
-            "refund_rate",
-            "rating",
+            "lead_count",
+            "deal_count",
+            "deal_amount",
+            "deal_rate",
         ],
         "detect_underperforming": True,
     },
     {
         "workflow": "monthly_trend",
-        "series_dimension": "course_category",
+        "series_dimension": "lead_channel",
         "metric_ids": [
-            "enrollment_count",
-            "paid_amount",
-            "completion_rate",
+            "deal_count",
+            "deal_amount",
+            "payment_amount",
         ],
     },
 ]
@@ -501,7 +501,7 @@ class DeepSeekProvider:
             "intent_schema": DOMAIN_INTENT_ADAPTER.json_schema(),
             "valid_json_examples": DOMAIN_INTENT_EXAMPLES,
             "rules": [
-                "当前领域仅限在线学习运营",
+                "当前领域仅限房地产销售经营分析",
                 "只返回一个 JSON 对象，不要使用 Markdown 代码块",
                 "不要解释原因，不要添加未定义字段",
                 "只能使用 Schema 列出的工作流、维度 ID 和指标 ID",
@@ -514,7 +514,7 @@ class DeepSeekProvider:
                 {
                     "role": "system",
                     "content": (
-                        "你是在线学习运营分析意图识别器。"
+                        "你是房地产销售经营分析意图识别器。"
                         "只返回符合给定 Schema 的 JSON 对象。"
                     ),
                 },
@@ -638,7 +638,7 @@ class DeepSeekProvider:
                 {
                     "role": "system",
                     "content": (
-                        "修复在线学习运营分析意图的结构。"
+                        "修复房地产销售经营分析意图的结构。"
                         "仅返回符合 Schema 的 JSON 对象。"
                     ),
                 },
@@ -1350,8 +1350,6 @@ class DeepSeekProvider:
             "比例",
             "percent",
             "rate",
-            "completion",
-            "refund",
             "quantile",
             "分位",
         )

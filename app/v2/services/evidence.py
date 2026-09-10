@@ -8,7 +8,6 @@ EvidenceUnit = Literal[
     "count",
     "percentage",
     "currency",
-    "score",
     "number",
     "text",
 ]
@@ -290,16 +289,12 @@ class EvidenceRegistry:
         if any(
             marker in normalized
             for marker in (
-                "完成率",
-                "退款率",
-                "折扣率",
+                "率",
                 "比例",
                 "百分比",
                 "quantile",
                 "rate",
                 "percentage",
-                "completion",
-                "refund",
             )
         ):
             return "percentage"
@@ -319,11 +314,6 @@ class EvidenceRegistry:
             )
         ):
             return "currency"
-        if any(
-            marker in normalized
-            for marker in ("评分", "得分", "score", "rating")
-        ):
-            return "score"
         if any(
             marker in normalized
             for marker in (
@@ -351,9 +341,7 @@ class EvidenceRegistry:
         if unit == "currency" and number is not None:
             return f"¥{number:,.2f}"
         if unit == "count" and number is not None:
-            return f"{int(number):,} 人"
-        if unit == "score" and number is not None:
-            return f"{number:.2f} 分"
+            return f"{int(number):,}"
         if unit == "number" and number is not None:
             return f"{number:,.2f}".rstrip("0").rstrip(".")
         return str(value)

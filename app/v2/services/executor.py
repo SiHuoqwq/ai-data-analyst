@@ -152,7 +152,7 @@ class AnalysisExecutor:
                             if decision.workflow == "unsupported":
                                 raise ProviderError(
                                     "UNSUPPORTED_ANALYSIS_INTENT",
-                                    "当前问题不属于已支持的在线学习运营分析范围",
+                                    "当前问题不属于已支持的房地产销售经营分析范围",
                                     retryable=False,
                                 ) from intent_error
                             intent = self.intent_router.default_intent(decision)

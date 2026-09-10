@@ -97,7 +97,6 @@ def test_intent_rejects_unsupported_domain_values(field, value):
         MonthlyTrendIntent.model_validate(payload)
 
 
-@pytest.mark.skip(reason="RE-3：DeepSeek 提示词仍为教育领域（在线学习运营），房地产提示词迁移待 RE-3")
 def test_deepseek_generates_intent_without_low_level_plan_fields():
     captured = {}
 
@@ -121,7 +120,7 @@ def test_deepseek_generates_intent_without_low_level_plan_fields():
         )
 
     intent = provider_with(handler).generate_intent(
-        "按月份分析课程趋势",
+        "按月份分析成交金额趋势",
         file_record(),
     )
 
@@ -129,7 +128,7 @@ def test_deepseek_generates_intent_without_low_level_plan_fields():
     body = captured["body"]
     prompt = json.dumps(body["messages"], ensure_ascii=False)
     prompt_payload = json.loads(body["messages"][1]["content"])
-    assert "在线学习运营" in prompt
+    assert "房地产销售经营分析" in prompt
     assert [
         item["workflow"]
         for item in prompt_payload["valid_json_examples"]
@@ -143,7 +142,6 @@ def test_deepseek_generates_intent_without_low_level_plan_fields():
     assert body["max_tokens"] == 1000
 
 
-@pytest.mark.skip(reason="RE-3：DeepSeek 提示词仍为教育领域（在线学习运营），房地产提示词迁移待 RE-3")
 def test_deepseek_repairs_invalid_intent_at_most_once():
     responses = [
         {"analysis_type": "unsupported"},
@@ -167,7 +165,7 @@ def test_deepseek_repairs_invalid_intent_at_most_once():
         )
 
     intent = provider_with(handler).generate_intent(
-        "按月份分析课程趋势",
+        "按月份分析成交金额趋势",
         file_record(),
     )
 
@@ -193,7 +191,6 @@ def test_deepseek_repairs_invalid_intent_at_most_once():
     assert "unsupported" not in repair_prompt
 
 
-@pytest.mark.skip(reason="RE-3：DeepSeek 提示词仍为教育领域（在线学习运营），房地产提示词迁移待 RE-3")
 def test_deepseek_fails_after_single_intent_repair():
     calls = 0
 
@@ -217,7 +214,7 @@ def test_deepseek_fails_after_single_intent_repair():
 
     with pytest.raises(ProviderError) as exc_info:
         provider_with(handler).generate_intent(
-            "按月份分析课程趋势",
+            "按月份分析成交金额趋势",
             file_record(),
         )
 

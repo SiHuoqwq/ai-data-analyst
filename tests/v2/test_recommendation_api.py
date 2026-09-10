@@ -16,11 +16,6 @@ from app.v2.services.provider import DeepSeekProvider, FakeAnalysisProvider
 from app.v2.services.recommendations import RecommendationServiceError
 
 
-pytestmark = pytest.mark.skip(
-    reason="RE-3：推荐服务仍绑定教育领域语义，待房地产推荐语义迁移"
-)
-
-
 def _configure_recommendation_dataset(tmp_path) -> None:
     csv_path = tmp_path / "recommendations.csv"
     csv_path.write_text(
@@ -130,11 +125,11 @@ def test_uploaded_csv_with_object_iso_date_gets_monthly_template(
                 "/api/v1/files/upload",
                 files={
                     "file": (
-                        "learning-operations.csv",
+                        "real-estate-sales.csv",
                         (
-                            "课程类别,报名日期,课程完成率\n"
-                            "数据分析,2026-01-05,0.82\n"
-                            "产品设计,2026-02-12,0.74\n"
+                            "获客渠道,线索日期,成交金额\n"
+                            "线上投放,2026-01-05,1500000\n"
+                            "渠道合作,2026-02-12,800000\n"
                         ).encode("utf-8"),
                         "text/csv",
                     )
@@ -149,7 +144,7 @@ def test_uploaded_csv_with_object_iso_date_gets_monthly_template(
                 date_column = next(
                     item
                     for item in record.columns_info
-                    if item["name"] == "报名日期"
+                    if item["name"] == "线索日期"
                 )
                 assert date_column["dtype"] == "object"
             finally:

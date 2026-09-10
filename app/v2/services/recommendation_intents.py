@@ -1,6 +1,6 @@
 from app.db.models import FileModel
 from app.services.parser import parse_file
-from app.v2.domain.learning_registry import LearningDomainRegistry
+from app.v2.domain.real_estate_registry import RealEstateDomainRegistry
 from app.v2.schemas.intents import AnalysisIntent, IntentMetric
 from app.v2.schemas.recommendations import RecommendationCandidate
 from app.v2.services.plan_compiler import (
@@ -53,7 +53,7 @@ def recommendation_validation_intents(
         for item in (file_record.columns_info or [])
     }
     fields = candidate.referenced_fields
-    registry = LearningDomainRegistry()
+    registry = RealEstateDomainRegistry()
     metric_definitions = {
         field: definition
         for metric_id, definition in registry.metrics.items()
@@ -102,7 +102,7 @@ def recommendation_validation_intents(
             seen_semantics.add(definition.semantic)
         return metrics or [
             IntentMetric(
-                semantic="报名人数",
+                semantic="线索数",
                 source_field=None,
                 aggregation="count",
             )
@@ -137,7 +137,7 @@ def recommendation_validation_intents(
                         date_field=date_field,
                         metrics=registered_metrics(
                             metric_fields,
-                            {"实付金额", "平均完成率"},
+                            {"成交金额", "回款金额"},
                         ),
                     )
                 )
@@ -169,7 +169,7 @@ def recommendation_validation_intents(
             dimensions=dimension_fields,
             metrics=registered_metrics(
                 metric_fields,
-                {"平均完成率", "退款率", "平均评分"},
+                {"到访数", "认购数", "成交套数", "成交金额", "回款金额"},
             ),
         )
     ]

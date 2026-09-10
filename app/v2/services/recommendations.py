@@ -12,7 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from app.db.database import SessionLocal
 from app.db.models import FileModel
 from app.v2.db.models import DatasetRecommendationModel, as_utc, utc_now
-from app.v2.domain.learning_registry import LearningDomainRegistry
+from app.v2.domain.real_estate_registry import RealEstateDomainRegistry
 from app.v2.schemas.recommendations import (
     RecommendationCandidate,
     RecommendationGeneration,
@@ -75,11 +75,11 @@ class DatasetRecommendationService:
     def __init__(
         self,
         session_factory: Callable = SessionLocal,
-        registry: LearningDomainRegistry | None = None,
+        registry: RealEstateDomainRegistry | None = None,
         renderer: DeterministicRecommendationRenderer | None = None,
     ):
         self.session_factory = session_factory
-        self.registry = registry or LearningDomainRegistry()
+        self.registry = registry or RealEstateDomainRegistry()
         self.renderer = renderer or DeterministicRecommendationRenderer(
             self.registry
         )
@@ -505,12 +505,12 @@ class DatasetRecommendationService:
             field
             for field in metrics
             if metric_semantics.get(field)
-            in {"平均完成率", "退款率", "平均评分"}
+            in {"到访数", "认购数", "成交套数", "成交金额", "回款金额"}
         ]
         monthly_metrics = [
             field
             for field in metrics
-            if metric_semantics.get(field) in {"实付金额", "平均完成率"}
+            if metric_semantics.get(field) in {"成交金额", "回款金额"}
         ]
         dates = [field for field in ordered_fields if is_date_hint(field)]
         candidates: list[RecommendationCandidate] = []

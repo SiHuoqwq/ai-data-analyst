@@ -9,11 +9,6 @@ from app.v2.services.plan_compiler import PlanCompilationError, PlanCompiler
 from app.v2.services.provider import DeepSeekProvider, FakeAnalysisProvider, ProviderError
 
 
-pytestmark = pytest.mark.skip(
-    reason="RE-3：推荐服务仍绑定教育领域语义，待房地产推荐语义迁移"
-)
-
-
 def file_record() -> FileModel:
     return FileModel(
         id="dataset-1",
@@ -109,47 +104,47 @@ def recommendation_record(columns: list[tuple[str, str]]) -> FileModel:
     [
         (
             "group_comparison",
-            [("课程类别", "object"), ("课程完成率", "float64")],
-            ["课程类别", "课程完成率"],
-            "平均完成率",
-            "mean",
-            "completion_rate_mean",
-            "percentage",
+            [("获客渠道", "object"), ("成交金额", "float64")],
+            ["获客渠道", "成交金额"],
+            "成交金额",
+            "sum",
+            "deal_amount_sum",
+            "currency",
         ),
         (
             "group_comparison",
-            [("课程类别", "object"), ("课程评分", "float64")],
-            ["课程类别", "课程评分"],
-            "平均评分",
-            "mean",
-            "rating_mean",
-            "score",
+            [("获客渠道", "object"), ("签约日期", "datetime64[ns]")],
+            ["获客渠道", "签约日期"],
+            "成交套数",
+            "count",
+            "deal_count",
+            "count",
         ),
         (
             "monthly_trend",
             [
-                ("课程类别", "object"),
-                ("报名日期", "datetime64[ns]"),
-                ("实付金额", "float64"),
+                ("获客渠道", "object"),
+                ("线索日期", "datetime64[ns]"),
+                ("成交金额", "float64"),
             ],
-            ["课程类别", "报名日期", "实付金额"],
-            "实付金额",
+            ["获客渠道", "线索日期", "成交金额"],
+            "成交金额",
             "sum",
-            "paid_amount_sum",
+            "deal_amount_sum",
             "currency",
         ),
         (
             "monthly_trend",
             [
-                ("课程类别", "object"),
-                ("报名日期", "datetime64[ns]"),
-                ("课程完成率", "float64"),
+                ("获客渠道", "object"),
+                ("线索日期", "datetime64[ns]"),
+                ("回款金额", "float64"),
             ],
-            ["课程类别", "报名日期", "课程完成率"],
-            "平均完成率",
-            "mean",
-            "completion_rate_mean",
-            "percentage",
+            ["获客渠道", "线索日期", "回款金额"],
+            "回款金额",
+            "sum",
+            "payment_amount_sum",
+            "currency",
         ),
     ],
 )
@@ -214,7 +209,7 @@ def test_recommendation_validation_uses_registered_metric_contracts(
             ["segment", "score"],
             ["segment"],
             "group_aggregate",
-            "sample_count",
+            "lead_count",
         ),
         (
             "monthly_trend",
@@ -226,7 +221,7 @@ def test_recommendation_validation_uses_registered_metric_contracts(
             ["segment", "observed_at", "score"],
             ["segment"],
             "monthly_aggregate",
-            "enrollment_count",
+            "lead_count",
         ),
         (
             "group_comparison",
@@ -234,7 +229,7 @@ def test_recommendation_validation_uses_registered_metric_contracts(
             ["segment", "score"],
             ["segment"],
             "group_aggregate",
-            "sample_count",
+            "lead_count",
         ),
         (
             "monthly_trend",
@@ -246,7 +241,7 @@ def test_recommendation_validation_uses_registered_metric_contracts(
             ["segment", "observed_at", "score"],
             ["segment"],
             "monthly_aggregate",
-            "enrollment_count",
+            "lead_count",
         ),
     ],
 )
@@ -276,7 +271,7 @@ def test_recommendation_validation_does_not_guess_unknown_numeric_semantics(
     assert [
         (metric.semantic, metric.source_field, metric.aggregation)
         for metric in intent.metrics
-    ] == [("报名人数", None, "count")]
+    ] == [("线索数", None, "count")]
 
     plan = PlanCompiler().compile(intent, record)
     assert [
@@ -289,18 +284,22 @@ def test_recommendation_validation_does_not_guess_unknown_numeric_semantics(
     ("intent_type", "columns", "referenced_fields"),
     [
         (
-            "group_comparison",
-            [("课程类别", "object"), ("实付金额", "float64")],
-            ["课程类别", "实付金额"],
+            "monthly_trend",
+            [
+                ("获客渠道", "object"),
+                ("线索日期", "datetime64[ns]"),
+                ("到访日期", "datetime64[ns]"),
+            ],
+            ["获客渠道", "线索日期", "到访日期"],
         ),
         (
             "monthly_trend",
             [
-                ("课程类别", "object"),
-                ("报名日期", "datetime64[ns]"),
-                ("课程评分", "float64"),
+                ("获客渠道", "object"),
+                ("线索日期", "datetime64[ns]"),
+                ("签约日期", "datetime64[ns]"),
             ],
-            ["课程类别", "报名日期", "课程评分"],
+            ["获客渠道", "线索日期", "签约日期"],
         ),
     ],
 )
