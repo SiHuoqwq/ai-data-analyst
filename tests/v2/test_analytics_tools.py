@@ -119,7 +119,7 @@ def test_inspect_dataset_classifies_chinese_fields(course_file):
     }
 
 
-def test_group_aggregate_computes_count_sum_mean_and_boolean_rate(course_file):
+def test_group_aggregate_computes_count_sum_mean_and_field_count(course_file):
     result = StructuredAnalysisTools().execute(
         "group_aggregate",
         {
@@ -128,7 +128,7 @@ def test_group_aggregate_computes_count_sum_mean_and_boolean_rate(course_file):
                 {"field": None, "aggregation": "count", "alias": "报名人数"},
                 {"field": "实付金额", "aggregation": "sum", "alias": "实付金额"},
                 {"field": "完成率", "aggregation": "mean", "alias": "平均完成率"},
-                {"field": "退款", "aggregation": "rate", "alias": "退款率"},
+                {"field": "课程评分", "aggregation": "count", "alias": "评分记录数"},
                 {"field": "课程评分", "aggregation": "mean", "alias": "平均评分"},
             ],
             "filters": [],
@@ -146,7 +146,7 @@ def test_group_aggregate_computes_count_sum_mean_and_boolean_rate(course_file):
             "报名人数": 2,
             "实付金额": 180.0,
             "平均完成率": 0.6,
-            "退款率": 0.5,
+            "评分记录数": 1,
             "平均评分": 4.5,
         },
         {
@@ -154,7 +154,7 @@ def test_group_aggregate_computes_count_sum_mean_and_boolean_rate(course_file):
             "报名人数": 2,
             "实付金额": 420.0,
             "平均完成率": 0.8,
-            "退款率": 0.0,
+            "评分记录数": 2,
             "平均评分": 4.5,
         },
     ]
@@ -415,10 +415,10 @@ def test_underperforming_combinations_records_deterministic_rule(course_file):
         "identify_underperforming",
         {
             "group_by": ["课程类别", "课程难度"],
-            "completion_field": "完成率",
+            "conversion_field": "课程评分",
             "min_sample_size": 2,
             "high_volume_quantile": 0.5,
-            "low_completion_quantile": 0.5,
+            "low_conversion_quantile": 0.5,
             "limit": 20,
         },
         course_file,
@@ -427,7 +427,7 @@ def test_underperforming_combinations_records_deterministic_rule(course_file):
 
     assert result.summary["rule"]["min_sample_size"] == 2
     assert result.summary["rule"]["high_volume_quantile"] == 0.5
-    assert result.summary["rule"]["low_completion_quantile"] == 0.5
+    assert result.summary["rule"]["low_conversion_quantile"] == 0.5
     assert table_rows(result)[0]["课程类别"] == "A"
 
 
@@ -508,9 +508,9 @@ def test_chart_splits_mixed_units_and_keeps_multidimensional_labels(
                     "alias": "平均完成率",
                 },
                 {
-                    "field": "课程评分",
+                    "field": "实付金额",
                     "aggregation": "mean",
-                    "alias": "平均课程评分",
+                    "alias": "平均实付金额",
                 },
             ],
             "filters": [],
@@ -527,7 +527,7 @@ def test_chart_splits_mixed_units_and_keeps_multidimensional_labels(
             "source_step_id": "aggregate",
             "chart_type": "bar",
             "x_field": "课程类别",
-            "y_fields": ["报名人数", "平均完成率", "平均课程评分"],
+            "y_fields": ["报名人数", "平均完成率", "平均实付金额"],
             "color_field": None,
             "title": "课程组合表现",
             "limit": 20,
@@ -540,7 +540,7 @@ def test_chart_splits_mixed_units_and_keeps_multidimensional_labels(
     assert result.summary["unit_groups"] == {
         "count": ["报名人数"],
         "percentage": ["平均完成率"],
-        "score": ["平均课程评分"],
+        "currency": ["平均实付金额"],
     }
     assert all(Path(item.chart_filepath).is_file() for item in result.drafts)
     assert all(" / " in item.alt_text for item in result.drafts)

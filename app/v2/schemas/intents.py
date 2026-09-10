@@ -11,37 +11,73 @@ from app.v2.schemas.analysis import (
 
 AnalysisType = Literal["group_comparison", "monthly_trend"]
 DimensionId = Literal[
-    "course_category",
-    "course_difficulty",
-    "purchase_channel",
-    "primary_device",
+    "project_name",
+    "city",
+    "district",
+    "sales_consultant",
+    "lead_channel",
+    "property_type",
+    "customer_level",
 ]
 GroupMetricId = Literal[
-    "enrollment_count",
-    "completion_rate",
-    "refund_rate",
-    "rating",
+    "lead_count",
+    "visit_count",
+    "subscription_count",
+    "deal_count",
+    "deal_amount",
+    "payment_amount",
+    "visit_rate",
+    "subscription_rate",
+    "deal_rate",
+    "avg_deal_amount",
 ]
 MonthlyMetricId = Literal[
-    "enrollment_count",
-    "paid_amount",
-    "completion_rate",
+    "lead_count",
+    "visit_count",
+    "subscription_count",
+    "deal_count",
+    "deal_amount",
+    "payment_amount",
 ]
 MetricSemantic = Literal[
-    "报名人数",
-    "实付金额",
-    "平均完成率",
-    "退款率",
-    "平均评分",
+    "线索数",
+    "到访数",
+    "认购数",
+    "成交套数",
+    "成交金额",
+    "回款金额",
+    "到访率",
+    "认购转化率",
+    "成交转化率",
+    "平均成交金额",
 ]
 
 SEMANTIC_AGGREGATIONS: dict[str, set[str]] = {
-    "报名人数": {"count"},
-    "实付金额": {"sum"},
-    "平均完成率": {"mean"},
-    "退款率": {"rate", "mean"},
-    "平均评分": {"mean"},
+    "线索数": {"count"},
+    "到访数": {"count"},
+    "认购数": {"count"},
+    "成交套数": {"count"},
+    "成交金额": {"sum"},
+    "回款金额": {"sum"},
+    "到访率": {"ratio"},
+    "认购转化率": {"ratio"},
+    "成交转化率": {"ratio"},
+    "平均成交金额": {"ratio"},
 }
+
+# 到访率 / 认购转化率 / 成交转化率 / 平均成交金额均为派生指标，
+# 由注册表定义分子与分母指标，跨指标相除计算。
+_COUNT_SEMANTICS = {"线索数", "到访数", "认购数", "成交套数"}
+_DERIVED_SEMANTICS = {"到访率", "认购转化率", "成交转化率", "平均成交金额"}
+_MONTHLY_SEMANTICS = {
+    "线索数",
+    "到访数",
+    "认购数",
+    "成交套数",
+    "成交金额",
+    "回款金额",
+}
+_GROUP_SEMANTICS = _MONTHLY_SEMANTICS | _DERIVED_SEMANTICS
 
 
 def _deduplicate(values: list[str]) -> list[str]:
@@ -86,9 +122,13 @@ class IntentMetric(StrictAnalysisModel):
     def validate_semantic_contract(self):
         if self.aggregation not in SEMANTIC_AGGREGATIONS[self.semantic]:
             raise ValueError("aggregation is not supported for this metric")
-        if self.semantic == "报名人数":
+        if self.semantic in _DERIVED_SEMANTICS:
             if self.source_field is not None:
-                raise ValueError("count metric must not define source_field")
+                raise ValueError("derived metric must not define source_field")
+        elif self.semantic in _COUNT_SEMANTICS:
+            # 计数指标可引用字段（到访/认购/签约日期）以统计非空记录，
+            # 线索数不引用字段，直接统计行数。
+            return self
         elif not self.source_field:
             raise ValueError("source_field is required for this metric")
         return self
@@ -109,8 +149,7 @@ class AnalysisIntent(StrictAnalysisModel):
         if self.analysis_type == "monthly_trend":
             if not self.date_field:
                 raise ValueError("date_field is required for monthly_trend")
-            allowed = {"报名人数", "实付金额", "平均完成率"}
-            if not semantics.issubset(allowed):
+            if not semantics.issubset(_MONTHLY_SEMANTICS):
                 raise ValueError("monthly_trend contains unsupported metrics")
             if len(self.dimensions) != 1:
                 raise ValueError("monthly_trend requires one series dimension")
@@ -119,8 +158,7 @@ class AnalysisIntent(StrictAnalysisModel):
                     "monthly_trend does not support underperforming groups"
                 )
         else:
-            allowed = {"报名人数", "平均完成率", "退款率", "平均评分"}
-            if not semantics.issubset(allowed):
+            if not semantics.issubset(_GROUP_SEMANTICS):
                 raise ValueError(
                     "group_comparison contains unsupported metrics"
                 )

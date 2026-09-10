@@ -13,42 +13,42 @@ def test_group_comparison_intent_accepts_only_logical_ids_and_deduplicates():
         {
             "workflow": "group_comparison",
             "dimensions": [
-                "course_category",
-                "course_category",
-                "primary_device",
+                "project_name",
+                "project_name",
+                "city",
             ],
             "metric_ids": [
-                "enrollment_count",
-                "completion_rate",
-                "completion_rate",
+                "deal_count",
+                "deal_amount",
+                "deal_amount",
             ],
             "detect_underperforming": True,
         }
     )
 
-    assert intent.dimensions == ["course_category", "primary_device"]
-    assert intent.metric_ids == ["enrollment_count", "completion_rate"]
+    assert intent.dimensions == ["project_name", "city"]
+    assert intent.metric_ids == ["deal_count", "deal_amount"]
 
 
 def test_monthly_trend_intent_contains_no_physical_date_or_metric_contract():
     intent = MonthlyTrendIntent.model_validate(
         {
             "workflow": "monthly_trend",
-            "series_dimension": "course_category",
+            "series_dimension": "lead_channel",
             "metric_ids": [
-                "enrollment_count",
-                "paid_amount",
-                "completion_rate",
-                "paid_amount",
+                "deal_count",
+                "deal_amount",
+                "payment_amount",
+                "deal_amount",
             ],
         }
     )
 
     assert intent.workflow == "monthly_trend"
     assert intent.metric_ids == [
-        "enrollment_count",
-        "paid_amount",
-        "completion_rate",
+        "deal_count",
+        "deal_amount",
+        "payment_amount",
     ]
     assert not hasattr(intent, "date_field")
 
@@ -68,8 +68,8 @@ def test_monthly_trend_intent_contains_no_physical_date_or_metric_contract():
 def test_minimal_intents_reject_model_controlled_fields(field):
     payload = {
         "workflow": "group_comparison",
-        "dimensions": ["course_category"],
-        "metric_ids": ["enrollment_count"],
+        "dimensions": ["project_name"],
+        "metric_ids": ["deal_count"],
         field: "not-allowed",
     }
 
@@ -82,22 +82,22 @@ def test_minimal_intents_reject_model_controlled_fields(field):
     [
         {
             "workflow": "unsupported",
-            "dimensions": ["course_category"],
-            "metric_ids": ["enrollment_count"],
+            "dimensions": ["project_name"],
+            "metric_ids": ["deal_count"],
         },
         {
             "workflow": "group_comparison",
             "dimensions": [],
-            "metric_ids": ["enrollment_count"],
+            "metric_ids": ["deal_count"],
         },
         {
             "workflow": "group_comparison",
-            "dimensions": ["course_category"],
+            "dimensions": ["project_name"],
             "metric_ids": [],
         },
         {
             "workflow": "monthly_trend",
-            "series_dimension": "course_category",
+            "series_dimension": "lead_channel",
             "metric_ids": [],
         },
     ],

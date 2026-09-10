@@ -24,33 +24,47 @@ class IntentRoutingDecision:
 
 class ControlledIntentRouter:
     monthly_signals = {
-        "change by month": 4,
+        "最近几个月": 4,
         "按月": 4,
         "月份": 3,
         "月度": 3,
         "趋势": 2,
+        "环比": 3,
+        "随时间": 3,
+        "销售趋势": 3,
         "增长": 1,
         "下滑": 1,
         "下降": 1,
         "波动": 1,
-        "环比": 3,
-        "随时间": 3,
+        "变化": 1,
     }
     group_signals = {
-        "key outcomes compare across": 3,
-        "关键指标表现有何差异": 3,
-        "不同课程": 3,
-        "不同类别": 3,
-        "不同难度": 3,
-        "不同渠道": 3,
-        "不同设备": 3,
+        "项目": 3,
+        "楼盘": 3,
+        "置业顾问": 3,
+        "销售顾问": 3,
+        "获客渠道": 3,
+        "客户等级": 3,
+        "户型": 3,
+        "区域": 3,
+        "城市": 3,
+        "排名": 3,
+        "渠道": 2,
+        "线索": 2,
+        "到访": 2,
+        "认购": 2,
+        "签约": 2,
+        "回款": 2,
+        "成交金额": 3,
+        "成交套数": 3,
+        "成交转化": 3,
+        "成交情况": 2,
+        "成交表现": 2,
         "对比": 2,
         "比较": 2,
-        "完成率": 1,
-        "退款率": 1,
-        "评分": 1,
-        "低表现": 3,
-        "高报名低完成": 4,
+        "差异": 2,
+        "哪些": 2,
+        "哪个": 2,
     }
 
     def route(self, question: str) -> IntentRoutingDecision:
@@ -74,29 +88,15 @@ class ControlledIntentRouter:
         if decision.workflow == "group_comparison":
             return GroupComparisonIntent(
                 workflow="group_comparison",
-                dimensions=[
-                    "course_category",
-                    "course_difficulty",
-                    "purchase_channel",
-                    "primary_device",
-                ],
-                metric_ids=[
-                    "enrollment_count",
-                    "completion_rate",
-                    "refund_rate",
-                    "rating",
-                ],
-                detect_underperforming=True,
+                dimensions=["lead_channel"],
+                metric_ids=["deal_count", "deal_amount"],
+                detect_underperforming=False,
             )
         if decision.workflow == "monthly_trend":
             return MonthlyTrendIntent(
                 workflow="monthly_trend",
-                series_dimension="course_category",
-                metric_ids=[
-                    "enrollment_count",
-                    "paid_amount",
-                    "completion_rate",
-                ],
+                series_dimension="lead_channel",
+                metric_ids=["deal_count", "deal_amount"],
             )
         raise ValueError("unsupported intent has no executable defaults")
 

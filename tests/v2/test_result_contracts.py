@@ -8,51 +8,39 @@ from app.v2.services.plan_compiler import PlanCompiler
 
 
 @pytest.fixture
-def course_file(tmp_path):
-    source = tmp_path / "courses.xlsx"
+def real_estate_file(tmp_path):
+    source = tmp_path / "real-estate.xlsx"
     pd.DataFrame(
         [
             {
-                "课程类别": "AI 应用",
-                "课程难度": "入门",
-                "购买渠道": "官网",
-                "主要学习设备": "Windows",
-                "实付金额": 100,
-                "课程完成率": 0.5,
-                "是否退款": False,
-                "课程评分": 4.5,
-                "报名日期": "2026-01-10",
+                "项目": "云顶壹号",
+                "获客渠道": "自然到访",
+                "签约日期": "2026-01-15",
+                "成交金额": 1000000,
+                "回款金额": 500000,
             },
             {
-                "课程类别": "AI 应用",
-                "课程难度": "进阶",
-                "购买渠道": "短视频",
-                "主要学习设备": "Android",
-                "实付金额": 200,
-                "课程完成率": 0.8,
-                "是否退款": True,
-                "课程评分": 4.0,
-                "报名日期": "2026-02-10",
+                "项目": "滨江府",
+                "获客渠道": "自然到访",
+                "签约日期": "2026-02-20",
+                "成交金额": 2000000,
+                "回款金额": 1200000,
             },
         ]
     ).to_excel(source, index=False)
     return FileModel(
         id="dataset-1",
-        filename="courses.xlsx",
+        filename="real-estate.xlsx",
         filepath=str(source),
         file_type="xlsx",
         row_count=2,
-        col_count=9,
+        col_count=5,
         columns_info=[
-            {"name": "课程类别", "dtype": "object"},
-            {"name": "课程难度", "dtype": "object"},
-            {"name": "购买渠道", "dtype": "object"},
-            {"name": "主要学习设备", "dtype": "object"},
-            {"name": "实付金额", "dtype": "float64"},
-            {"name": "课程完成率", "dtype": "float64"},
-            {"name": "是否退款", "dtype": "bool"},
-            {"name": "课程评分", "dtype": "float64"},
-            {"name": "报名日期", "dtype": "datetime64[ns]"},
+            {"name": "项目", "dtype": "object"},
+            {"name": "获客渠道", "dtype": "object"},
+            {"name": "签约日期", "dtype": "datetime64[ns]"},
+            {"name": "成交金额", "dtype": "float64"},
+            {"name": "回款金额", "dtype": "float64"},
         ],
         profile_report="",
     )
@@ -62,39 +50,41 @@ def monthly_intent():
     return AnalysisIntent.model_validate(
         {
             "analysis_type": "monthly_trend",
-            "dimensions": ["课程类别"],
-            "date_field": "报名日期",
+            "dimensions": ["获客渠道"],
+            "date_field": "签约日期",
             "metrics": [
                 {
-                    "semantic": "报名人数",
+                    "semantic": "线索数",
                     "source_field": None,
                     "aggregation": "count",
                 },
                 {
-                    "semantic": "实付金额",
-                    "source_field": "实付金额",
+                    "semantic": "成交金额",
+                    "source_field": "成交金额",
                     "aggregation": "sum",
                 },
                 {
-                    "semantic": "平均完成率",
-                    "source_field": "课程完成率",
-                    "aggregation": "mean",
+                    "semantic": "回款金额",
+                    "source_field": "回款金额",
+                    "aggregation": "sum",
                 },
             ],
         }
     )
 
 
-def test_monthly_tool_returns_stable_contract_and_separate_preview(course_file):
+def test_monthly_tool_returns_stable_contract_and_separate_preview(
+    real_estate_file,
+):
     step = PlanCompiler().compile(
         monthly_intent(),
-        course_file,
+        real_estate_file,
     ).step("monthly_aggregate")
 
     result = StructuredAnalysisTools().execute(
         step.operation,
         step.arguments,
-        course_file,
+        real_estate_file,
         {},
         output_schema=step.output_schema,
         source_step_id=step.step_id,
@@ -103,9 +93,9 @@ def test_monthly_tool_returns_stable_contract_and_separate_preview(course_file):
     assert list(result.dataframe.columns) == [
         "period",
         "series",
-        "enrollment_count",
-        "paid_amount_sum",
-        "completion_rate_mean",
+        "lead_count",
+        "deal_amount_sum",
+        "payment_amount_sum",
     ]
     assert result.output_contract.source_tool == "monthly_trend"
     assert result.output_contract.source_step_id == "monthly_aggregate"
@@ -116,77 +106,77 @@ def test_monthly_tool_returns_stable_contract_and_separate_preview(course_file):
     assert [column["key"] for column in table["columns"]] == [
         "period",
         "series",
-        "enrollment_count",
-        "paid_amount_sum",
-        "completion_rate_mean",
+        "lead_count",
+        "deal_amount_sum",
+        "payment_amount_sum",
     ]
     assert [column["label"] for column in table["columns"]] == [
         "月份",
-        "课程类别",
-        "报名人数",
-        "实付金额",
-        "平均完成率",
+        "获客渠道",
+        "线索数",
+        "成交金额",
+        "回款金额",
     ]
 
 
-def test_monthly_trend_signals_use_stable_metric_ids(course_file):
+def test_monthly_trend_signals_use_stable_metric_ids(real_estate_file):
     step = PlanCompiler().compile(
         monthly_intent(),
-        course_file,
+        real_estate_file,
     ).step("monthly_aggregate")
 
     result = StructuredAnalysisTools().execute(
         step.operation,
         step.arguments,
-        course_file,
+        real_estate_file,
         {},
         output_schema=step.output_schema,
         source_step_id=step.step_id,
     )
 
     assert set(result.summary["trend_signals"]["by_metric"]) == {
-        "enrollment_count",
-        "paid_amount_sum",
-        "completion_rate_mean",
+        "lead_count",
+        "deal_amount_sum",
+        "payment_amount_sum",
     }
     assert result.summary["metric_labels"] == {
-        "enrollment_count": "报名人数",
-        "paid_amount_sum": "实付金额",
-        "completion_rate_mean": "平均完成率",
+        "lead_count": "线索数",
+        "deal_amount_sum": "成交金额",
+        "payment_amount_sum": "回款金额",
     }
 
 
 def test_group_contract_keeps_full_result_separate_from_artifact_preview(
-    course_file,
+    real_estate_file,
 ):
     intent = AnalysisIntent.model_validate(
         {
             "analysis_type": "group_comparison",
-            "dimensions": ["课程难度"],
+            "dimensions": ["项目"],
             "metrics": [
                 {
-                    "semantic": "报名人数",
+                    "semantic": "线索数",
                     "source_field": None,
                     "aggregation": "count",
                 },
                 {
-                    "semantic": "平均完成率",
-                    "source_field": "课程完成率",
-                    "aggregation": "mean",
+                    "semantic": "成交金额",
+                    "source_field": "成交金额",
+                    "aggregation": "sum",
                 },
             ],
         }
     )
     step = PlanCompiler().compile(
         intent,
-        course_file,
+        real_estate_file,
     ).step("group_aggregate")
     arguments = {**step.arguments, "limit": 1}
 
     result = StructuredAnalysisTools().execute(
         step.operation,
         arguments,
-        course_file,
+        real_estate_file,
         {},
         output_schema=step.output_schema,
         source_step_id=step.step_id,
@@ -194,8 +184,8 @@ def test_group_contract_keeps_full_result_separate_from_artifact_preview(
 
     assert list(result.dataframe.columns) == [
         "dimension_1",
-        "sample_count",
-        "completion_rate_mean",
+        "lead_count",
+        "deal_amount_sum",
     ]
     assert len(result.dataframe) == 2
     assert result.output_contract.full_row_count == 2

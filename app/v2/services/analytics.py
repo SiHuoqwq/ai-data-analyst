@@ -20,19 +20,13 @@ from app.v2.schemas.results import ResultSchema, ToolOutputContract
 from app.v2.services.artifacts import ArtifactDraft
 
 
-TRUTHY = {"1", "true", "yes", "y", "是", "已退款", "退款"}
-FALSY = {"0", "false", "no", "n", "否", "未退款"}
-
-
 def _chart_unit(field: str) -> str:
     normalized = field.lower()
-    if any(marker in normalized for marker in ("完成率", "退款率", "比例", "rate")):
+    if any(marker in normalized for marker in ("率", "比例", "rate")):
         return "percentage"
-    if any(marker in normalized for marker in ("金额", "收入", "销售额", "amount", "revenue")):
+    if any(marker in normalized for marker in ("金额", "amount", "revenue")):
         return "currency"
-    if any(marker in normalized for marker in ("评分", "得分", "score", "rating")):
-        return "score"
-    if any(marker in normalized for marker in ("人数", "数量", "记录数", "count")):
+    if any(marker in normalized for marker in ("数", "数量", "count")):
         return "count"
     return "number"
 
@@ -248,25 +242,6 @@ def _output_contract(
     )
 
 
-def _as_rate(series: pd.Series) -> pd.Series:
-    if pd.api.types.is_bool_dtype(series):
-        return series.astype(float)
-    if pd.api.types.is_numeric_dtype(series):
-        return pd.to_numeric(series, errors="coerce")
-
-    def convert(value):
-        if pd.isna(value):
-            return None
-        normalized = str(value).strip().lower()
-        if normalized in TRUTHY:
-            return 1.0
-        if normalized in FALSY:
-            return 0.0
-        return None
-
-    return series.map(convert).astype(float)
-
-
 def _as_number(series: pd.Series) -> pd.Series:
     if pd.api.types.is_numeric_dtype(series):
         return pd.to_numeric(series, errors="coerce")
@@ -400,31 +375,42 @@ class StructuredAnalysisTools:
         self._require_fields(df, fields)
         working = df.copy()
         grouped = working.groupby(group_by, dropna=False, sort=False)
-        pieces = [grouped.size().rename("__group_size")]
-        aliases = []
-        for index, metric in enumerate(metrics):
+        computed: dict[str, pd.Series] = {}
+        # 第一遍：基础指标（计数引用字段时统计非空记录）。
+        for metric in metrics:
+            if metric.get("kind", "base") == "derived":
+                continue
             alias = metric["alias"]
-            aliases.append(alias)
             aggregation = metric["aggregation"]
             field_name = metric.get("field")
             if aggregation == "count":
-                value = grouped.size().rename(alias)
+                value = (
+                    grouped.size()
+                    if not field_name
+                    else grouped[field_name].count()
+                )
             else:
                 if aggregation in {"sum", "mean", "min", "max"}:
                     working[field_name] = _as_number(working[field_name])
-                if aggregation == "rate":
-                    working[field_name] = _as_rate(working[field_name])
-                    value = working.groupby(
-                        group_by, dropna=False, sort=False
-                    )[field_name].mean().rename(alias)
-                else:
-                    value = getattr(
-                        working.groupby(group_by, dropna=False, sort=False)[
-                            field_name
-                        ],
-                        aggregation,
-                    )().rename(alias)
-            pieces.append(value)
+                value = getattr(
+                    working.groupby(group_by, dropna=False, sort=False)[
+                        field_name
+                    ],
+                    aggregation,
+                )()
+            computed[alias] = value
+        # 第二遍：派生指标按分组内分子/分母相除，零分母→空值。
+        for metric in metrics:
+            if metric.get("kind", "base") != "derived":
+                continue
+            alias = metric["alias"]
+            numerator = computed[metric["numerator_metric_id"]]
+            denominator = computed[metric["denominator_metric_id"]]
+            value = numerator / denominator
+            value = value.replace([float("inf"), float("-inf")], float("nan"))
+            computed[alias] = value
+        aliases = [metric["alias"] for metric in metrics]
+        pieces = [computed[alias].rename(alias) for alias in aliases]
         result = pd.concat(pieces, axis=1).reset_index()
         return result[group_by + aliases]
 
@@ -770,66 +756,54 @@ class StructuredAnalysisTools:
         source_step_id: str | None = None,
     ) -> ToolExecutionResult:
         self._require_fields(
-            df, validated["group_by"] + [validated["completion_field"]]
+            df, validated["group_by"] + [validated["conversion_field"]]
         )
-        working = df.copy()
-        working[validated["completion_field"]] = _as_number(
-            working[validated["completion_field"]]
+        grouped = df.groupby(validated["group_by"], dropna=False)
+        lead_count = grouped.size().rename("lead_count")
+        conversion_count = (
+            grouped[validated["conversion_field"]].count().rename("deal_count")
         )
-        grouped = (
-            working.groupby(validated["group_by"], dropna=False)
-            .agg(
-                报名人数=(validated["completion_field"], "size"),
-                平均完成率=(validated["completion_field"], "mean"),
-            )
-            .reset_index()
+        deal_rate = (conversion_count / lead_count).rename("deal_rate")
+        deal_rate = deal_rate.replace(
+            [float("inf"), float("-inf")], float("nan")
         )
-        eligible = grouped[
-            grouped["报名人数"] >= validated["min_sample_size"]
+        result = pd.concat([lead_count, deal_rate], axis=1).reset_index()
+        eligible = result[
+            result["lead_count"] >= validated["min_sample_size"]
         ].copy()
         if eligible.empty:
             raise ToolExecutionError(
                 "EMPTY_RESULT", "没有组合达到最小样本量要求"
             )
         volume_threshold = float(
-            eligible["报名人数"].quantile(validated["high_volume_quantile"])
+            eligible["lead_count"].quantile(validated["high_volume_quantile"])
         )
-        completion_threshold = float(
-            eligible["平均完成率"].quantile(
-                validated["low_completion_quantile"]
+        conversion_threshold = float(
+            eligible["deal_rate"].quantile(
+                validated["low_conversion_quantile"]
             )
         )
-        result = eligible[
-            (eligible["报名人数"] >= volume_threshold)
-            & (eligible["平均完成率"] <= completion_threshold)
-        ].sort_values(["平均完成率", "报名人数"], ascending=[True, False])
-        result = result.head(validated["limit"]).reset_index(drop=True)
-        if output_schema is not None:
-            metric_ids = [item.id for item in output_schema.metrics]
-            metric_sources = [
-                column
-                for column in result.columns
-                if column not in validated["group_by"]
-            ]
-            result = result.rename(
-                columns=dict(zip(metric_sources, metric_ids))
-            )
-        result = _apply_result_schema(
-            result,
+        matched = eligible[
+            (eligible["lead_count"] >= volume_threshold)
+            & (eligible["deal_rate"] <= conversion_threshold)
+        ].sort_values(["deal_rate", "lead_count"], ascending=[True, False])
+        matched = matched.head(validated["limit"]).reset_index(drop=True)
+        matched = _apply_result_schema(
+            matched,
             output_schema,
             dimension_sources=validated["group_by"],
         )
         rule = {
             "min_sample_size": validated["min_sample_size"],
             "high_volume_quantile": validated["high_volume_quantile"],
-            "low_completion_quantile": validated["low_completion_quantile"],
+            "low_conversion_quantile": validated["low_conversion_quantile"],
             "volume_threshold": volume_threshold,
-            "completion_threshold": completion_threshold,
+            "conversion_threshold": conversion_threshold,
         }
         summary = {
-            "description": "高报名但低完成率组合",
+            "description": "高线索量低成交转化率组合",
             "rule": rule,
-            "matched_groups": len(result),
+            "matched_groups": len(matched),
         }
         if output_schema is not None:
             summary["result_schema"] = output_schema.model_dump(mode="json")
@@ -837,29 +811,29 @@ class StructuredAnalysisTools:
                 item.id: item.label for item in output_schema.metrics
             }
         contract = _output_contract(
-            result,
+            matched,
             output_schema,
             operation="identify_underperforming",
             source_step_id=source_step_id,
-            preview_row_count=len(result),
+            preview_row_count=len(matched),
         )
         draft = ArtifactDraft(
             artifact_type="table",
-            title="高报名低完成率组合",
+            title="高线索量低成交转化率组合",
             content_format="json",
-            payload=_table_payload(result, output_schema),
-            row_count=len(result),
+            payload=_table_payload(matched, output_schema),
+            row_count=len(matched),
         )
         return ToolExecutionResult(
             "success",
             summary,
-            _json_rows(result),
-            len(result),
+            _json_rows(matched),
+            len(matched),
             False,
             [],
             [draft],
             validated,
-            result,
+            matched,
             contract,
         )
 

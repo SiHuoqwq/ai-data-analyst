@@ -5,7 +5,7 @@ import pandas as pd
 
 from app.db.models import FileModel
 from app.services.parser import parse_file
-from app.v2.domain.learning_registry import LearningDomainRegistry
+from app.v2.domain.real_estate_registry import RealEstateDomainRegistry
 from app.v2.schemas.intents import (
     AnalysisIntent,
     DomainIntent,
@@ -52,17 +52,35 @@ class CompiledPlan:
 
 
 SEMANTIC_FIELDS = {
-    "报名人数": ("sample_count", "count"),
-    "实付金额": ("paid_amount_sum", "currency"),
-    "平均完成率": ("completion_rate_mean", "percentage"),
-    "退款率": ("refund_rate", "percentage"),
-    "平均评分": ("rating_mean", "score"),
+    "线索数": ("lead_count", "count"),
+    "到访数": ("visit_count", "count"),
+    "认购数": ("subscription_count", "count"),
+    "成交套数": ("deal_count", "count"),
+    "成交金额": ("deal_amount_sum", "currency"),
+    "回款金额": ("payment_amount_sum", "currency"),
+    "到访率": ("visit_rate", "percentage"),
+    "认购转化率": ("subscription_rate", "percentage"),
+    "成交转化率": ("deal_rate", "percentage"),
+    "平均成交金额": ("avg_deal_amount", "currency"),
 }
 
 MONTHLY_FIELDS = {
-    "报名人数": ("enrollment_count", "count"),
-    "实付金额": ("paid_amount_sum", "currency"),
-    "平均完成率": ("completion_rate_mean", "percentage"),
+    "线索数": ("lead_count", "count"),
+    "到访数": ("visit_count", "count"),
+    "认购数": ("subscription_count", "count"),
+    "成交套数": ("deal_count", "count"),
+    "成交金额": ("deal_amount_sum", "currency"),
+    "回款金额": ("payment_amount_sum", "currency"),
+}
+
+# 房地产月度趋势中，各指标对应各自的业务日期阶段。
+MONTHLY_METRIC_DATES = {
+    "lead_count": "lead_date",
+    "visit_count": "visit_date",
+    "subscription_count": "subscription_date",
+    "deal_count": "contract_date",
+    "deal_amount": "contract_date",
+    "payment_amount": "contract_date",
 }
 
 
@@ -199,12 +217,12 @@ class PlanCompiler:
     def __init__(
         self,
         validator: PlanValidator | None = None,
-        registry: LearningDomainRegistry | None = None,
+        registry: RealEstateDomainRegistry | None = None,
     ):
         self.validator = validator or PlanValidator(
             dataframe_loader=parse_file
         )
-        self.registry = registry or LearningDomainRegistry()
+        self.registry = registry or RealEstateDomainRegistry()
 
     def compile(
         self,
@@ -240,6 +258,18 @@ class PlanCompiler:
                 ],
                 include_underperforming=intent.detect_underperforming,
             )
+        date_ids = {
+            MONTHLY_METRIC_DATES[item] for item in intent.metric_ids
+        }
+        if len(date_ids) != 1:
+            raise PlanCompilationError(
+                "MIXED_MONTHLY_DATE_SCOPE",
+                "月度趋势中各指标对应不同业务日期，暂不支持混合日期聚合",
+                {
+                    "metric_ids": intent.metric_ids,
+                    "date_ids": sorted(date_ids),
+                },
+            )
         return AnalysisIntent(
             analysis_type="monthly_trend",
             dimensions=[
@@ -247,7 +277,7 @@ class PlanCompiler:
                     intent.series_dimension
                 ).source_field
             ],
-            date_field=self.registry.date("enrollment_date").source_field,
+            date_field=self.registry.date(date_ids.pop()).source_field,
             metrics=[
                 self._resolved_metric(item)
                 for item in intent.metric_ids
@@ -261,6 +291,49 @@ class PlanCompiler:
             source_field=definition.source_field,
             aggregation=definition.aggregation,
         )
+
+    def _compile_metric_specs(
+        self,
+        metrics: list[IntentMetric],
+        monthly: bool,
+    ) -> list[dict[str, Any]]:
+        field_map = MONTHLY_FIELDS if monthly else SEMANTIC_FIELDS
+        base_specs: dict[str, dict[str, Any]] = {}
+        derived_specs: list[dict[str, Any]] = []
+
+        def ensure_base(definition) -> str:
+            result_id = field_map[definition.semantic][0]
+            if result_id not in base_specs:
+                base_specs[result_id] = {
+                    "kind": "base",
+                    "field": definition.source_field,
+                    "aggregation": definition.aggregation,
+                    "alias": result_id,
+                }
+            return result_id
+
+        for metric in metrics:
+            definition = self.registry.metric_by_semantic(metric.semantic)
+            result_id = field_map[metric.semantic][0]
+            if definition.is_derived:
+                numerator_id = ensure_base(
+                    self.registry.metric(definition.numerator_metric_id)
+                )
+                denominator_id = ensure_base(
+                    self.registry.metric(definition.denominator_metric_id)
+                )
+                derived_specs.append(
+                    {
+                        "kind": "derived",
+                        "numerator_metric_id": numerator_id,
+                        "denominator_metric_id": denominator_id,
+                        "alias": result_id,
+                    }
+                )
+            else:
+                ensure_base(definition)
+
+        return list(base_specs.values()) + derived_specs
 
     def _compile_monthly(self, intent: AnalysisIntent) -> CompiledPlan:
         dimensions = [
@@ -335,7 +408,7 @@ class PlanCompiler:
         )
         return CompiledPlan(
             workflow="monthly_trend",
-            goal="按月份和课程类别分析运营趋势",
+            goal="按月份分析房地产销售趋势",
             steps=steps,
             intent=intent,
         )
@@ -363,17 +436,12 @@ class PlanCompiler:
         aggregate_step = CompiledStep(
             "group_aggregate",
             "group_aggregate",
-            "比较课程运营指标",
+            "比较房地产销售指标",
             {
                 "group_by": intent.dimensions,
-                "metrics": [
-                    {
-                        "field": item.source_field,
-                        "aggregation": item.aggregation,
-                        "alias": result.id,
-                    }
-                    for item, result in zip(intent.metrics, metrics)
-                ],
+                "metrics": self._compile_metric_specs(
+                    intent.metrics, monthly=False
+                ),
                 "filters": [
                     item.model_dump(mode="json") for item in intent.filters
                 ],
@@ -393,71 +461,67 @@ class PlanCompiler:
             ),
             aggregate_step,
         ]
-        chart_sources = ["group_aggregate"]
         if intent.include_underperforming:
-            completion = next(
-                (
-                    item
-                    for item in intent.metrics
-                    if item.semantic == "平均完成率"
-                ),
-                None,
-            )
-            if completion is None:
-                raise PlanCompilationError(
-                    "MISSING_REQUIRED_METRIC",
-                    "识别低完成组合需要平均完成率指标",
-                )
-            under_schema = ResultSchema(
-                dimensions=dimensions,
-                metrics=[
-                    ResultMetric(
-                        id="sample_count",
-                        label="报名人数",
-                        unit="count",
-                        aggregation="count",
-                        nullable=False,
-                    ),
-                    ResultMetric(
-                        id="completion_rate_mean",
-                        label="平均完成率",
-                        unit="percentage",
-                        aggregation="mean",
-                        nullable=True,
-                        source_field=completion.source_field,
-                    ),
-                ],
-                grain=[item.id for item in dimensions],
-                metadata={"result_kind": "underperforming"},
-            )
             steps.append(
-                CompiledStep(
-                    "underperforming",
-                    "identify_underperforming",
-                    "识别高报名低完成组合",
-                    {
-                        "group_by": intent.dimensions,
-                        "completion_field": completion.source_field,
-                        "min_sample_size": 5,
-                        "high_volume_quantile": 0.75,
-                        "low_completion_quantile": 0.25,
-                        "limit": 20,
-                    },
-                    under_schema,
-                )
+                self._underperforming_step(intent, dimensions)
             )
-            chart_sources.append("underperforming")
         steps.append(
             CompiledStep(
                 "charts",
                 "chart_planning",
                 "根据结果元数据生成对比图",
-                {"source_step_ids": chart_sources},
+                {"source_step_ids": ["group_aggregate"]},
             )
         )
         return CompiledPlan(
             workflow="group_comparison",
-            goal="比较课程运营维度并识别低表现组合",
+            goal="比较房地产销售维度表现",
             steps=tuple(steps),
             intent=intent,
+        )
+
+    def _underperforming_step(
+        self,
+        intent: AnalysisIntent,
+        dimensions: list[ResultDimension],
+    ) -> CompiledStep:
+        lead = self.registry.metric("lead_count")
+        deal_rate = self.registry.metric("deal_rate")
+        schema = ResultSchema(
+            dimensions=dimensions,
+            metrics=[
+                ResultMetric(
+                    id="lead_count",
+                    label=lead.label,
+                    unit="count",
+                    aggregation="count",
+                    nullable=False,
+                    source_field=None,
+                ),
+                ResultMetric(
+                    id="deal_rate",
+                    label=deal_rate.label,
+                    unit="percentage",
+                    aggregation="ratio",
+                    nullable=True,
+                    source_field=None,
+                ),
+            ],
+            grain=[item.id for item in dimensions],
+        )
+        return CompiledStep(
+            "underperforming",
+            "identify_underperforming",
+            "识别高线索量低成交转化率组合",
+            {
+                "group_by": intent.dimensions,
+                "conversion_field": self.registry.date(
+                    "contract_date"
+                ).source_field,
+                "min_sample_size": 5,
+                "high_volume_quantile": 0.75,
+                "low_conversion_quantile": 0.25,
+                "limit": 20,
+            },
+            schema,
         )

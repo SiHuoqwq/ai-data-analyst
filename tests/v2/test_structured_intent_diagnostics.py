@@ -39,8 +39,8 @@ def test_schema_mismatch_records_only_types_locations_and_hash():
     content = json.dumps(
         {
             "workflow": "group_comparison",
-            "dimensions": ["course_category"],
-            "metric_ids": ["enrollment_count"],
+            "dimensions": ["lead_channel"],
+            "metric_ids": ["deal_count"],
             "secret_explanation": "private-response-text",
         }
     )
@@ -98,12 +98,12 @@ def _provider(handler):
 def _file_record():
     return FileModel(
         id="dataset-1",
-        filename="courses.csv",
-        filepath="courses.csv",
+        filename="real-estate.csv",
+        filepath="real-estate.csv",
         file_type="csv",
         row_count=1,
         col_count=1,
-        columns_info=[{"name": "课程类别", "dtype": "object"}],
+        columns_info=[{"name": "获客渠道", "dtype": "object"}],
         profile_report="",
     )
 
@@ -133,7 +133,7 @@ def test_provider_records_two_redacted_diagnostics_without_response_text():
 
     provider = _provider(handler)
     with pytest.raises(ProviderError) as exc_info:
-        provider.generate_intent("比较不同课程", _file_record())
+        provider.generate_intent("比较不同渠道", _file_record())
 
     assert exc_info.value.code == "INTENT_REPAIR_FAILED"
     assert [
@@ -144,4 +144,4 @@ def test_provider_records_two_redacted_diagnostics_without_response_text():
     ] == ["initial", "repair"]
     serialized = json.dumps(provider.last_intent_diagnostics)
     assert "do-not-store" not in serialized
-    assert "比较不同课程" not in serialized
+    assert "比较不同渠道" not in serialized

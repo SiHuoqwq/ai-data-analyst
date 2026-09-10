@@ -77,10 +77,10 @@ def test_mock_first_and_second_acceptance_questions_complete(v2_runtime):
     csv_path = Path(v2_runtime["database_path"]).with_name("courses.csv")
     csv_path.write_text(
         "课程类别,课程难度,购买渠道,主要学习设备,完成率,是否退款,课程评分,报名日期,实付金额\n"
-        "AI应用,高级,短视频平台,Android,0.4,否,4.2,2025-01-03,199\n"
-        "AI应用,高级,短视频平台,Android,0.6,是,4.0,2025-02-03,159\n"
-        "数据分析,初级,官网,Windows,0.8,否,4.8,2025-01-12,299\n"
-        "数据分析,初级,官网,Windows,0.7,否,,2025-02-12,269\n",
+        "AI应用,高级,短视频平台,Android,0.4,0,4.2,2025-01-03,199\n"
+        "AI应用,高级,短视频平台,Android,0.6,1,4.0,2025-02-03,159\n"
+        "数据分析,初级,官网,Windows,0.8,0,4.8,2025-01-12,299\n"
+        "数据分析,初级,官网,Windows,0.7,0,,2025-02-12,269\n",
         encoding="utf-8",
     )
     session = database.SessionLocal()
@@ -104,8 +104,8 @@ def test_mock_first_and_second_acceptance_questions_complete(v2_runtime):
                     "group_by": ["课程类别", "课程难度", "购买渠道", "主要学习设备"],
                     "metrics": [
                         metric(None, "count", "报名人数"),
-                        metric("完成率", "rate", "平均完成率"),
-                        metric("是否退款", "rate", "退款率"),
+                        metric("完成率", "mean", "平均完成率"),
+                        metric("是否退款", "mean", "退款率"),
                         metric("课程评分", "mean", "平均课程评分"),
                     ],
                     "filters": [],
@@ -143,7 +143,7 @@ def test_mock_first_and_second_acceptance_questions_complete(v2_runtime):
                     "metrics": [
                         metric(None, "count", "报名人数"),
                         metric("实付金额", "sum", "实付金额"),
-                        metric("完成率", "rate", "平均完成率"),
+                        metric("完成率", "mean", "平均完成率"),
                     ],
                     "filters": [],
                     "limit": 100,

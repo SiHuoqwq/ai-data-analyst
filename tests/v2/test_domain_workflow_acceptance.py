@@ -60,46 +60,50 @@ def _metric(semantic, source_field, aggregation):
 
 def _prepare_dataset(v2_runtime):
     csv_path = Path(v2_runtime["database_path"]).with_name(
-        "domain-courses.csv"
+        "domain-real-estate.csv"
+    )
+    header = (
+        "项目,城市,区域,置业顾问,获客渠道,户型,客户等级,"
+        "线索日期,到访日期,认购日期,签约日期,成交金额,回款金额"
     )
     rows = [
-        "course_category,difficulty,channel,device,completion,refunded,"
-        "rating,enrolled_at,paid_amount"
+        # 自然到访（5 线索，4 成交）
+        "云顶壹号,上海,浦东,张伟,自然到访,三居,A,2026-01-05,2026-01-06,2026-01-10,2026-01-15,1000000,500000",
+        "云顶壹号,上海,浦东,李娜,自然到访,两居,B,2026-01-08,2026-01-09,2026-01-12,2026-01-18,1200000,600000",
+        "云顶壹号,上海,徐汇,王强,自然到访,三居,A,2026-02-02,2026-02-03,2026-02-08,2026-02-12,1100000,550000",
+        "云顶壹号,上海,浦东,赵敏,自然到访,两居,C,2026-02-10,2026-02-11,2026-02-15,2026-02-20,1300000,650000",
+        "云顶壹号,上海,徐汇,刘洋,自然到访,三居,B,2026-03-01,2026-03-02,2026-03-05,,,",
+        # 渠道分销（5 线索，1 成交 —— 高线索低成交）
+        "滨江府,杭州,西湖,孙磊,渠道分销,三居,A,2026-01-06,2026-01-08,,,,",
+        "滨江府,杭州,西湖,周芳,渠道分销,两居,B,2026-01-15,2026-01-16,,,,",
+        "滨江府,杭州,滨江,吴刚,渠道分销,三居,C,2026-02-03,2026-02-05,2026-02-10,2026-02-18,900000,450000",
+        "滨江府,杭州,西湖,郑爽,渠道分销,两居,A,2026-02-12,,,,,",
+        "滨江府,杭州,滨江,冯涛,渠道分销,三居,B,2026-03-02,2026-03-04,,,,",
     ]
-    rows.extend(
-        f"AI,advanced,video,Android,{completion},"
-        f"{'true' if index == 0 else 'false'},4.2,"
-        f"2025-{1 + index % 2:02d}-{3 + index:02d},{199 - index}"
-        for index, completion in enumerate(
-            [0.3, 0.4, 0.5, 0.4, 0.3, 0.5]
-        )
+    csv_path.write_text(
+        "\n".join([header, *rows]) + "\n", encoding="utf-8"
     )
-    rows.extend(
-        f"Data,basic,web,Windows,{completion},false,"
-        f"{'' if index == 0 else '4.8'},"
-        f"2025-{1 + index % 2:02d}-{12 + index:02d},{299 - index}"
-        for index, completion in enumerate(
-            [0.8, 0.7, 0.9, 0.8, 0.7, 0.9]
-        )
-    )
-    csv_path.write_text("\n".join(rows) + "\n", encoding="utf-8")
     columns_info = [
-        {"name": "course_category", "dtype": "object"},
-        {"name": "difficulty", "dtype": "object"},
-        {"name": "channel", "dtype": "object"},
-        {"name": "device", "dtype": "object"},
-        {"name": "completion", "dtype": "float64"},
-        {"name": "refunded", "dtype": "bool"},
-        {"name": "rating", "dtype": "float64"},
-        {"name": "enrolled_at", "dtype": "datetime64[ns]"},
-        {"name": "paid_amount", "dtype": "float64"},
+        {"name": "项目", "dtype": "object"},
+        {"name": "城市", "dtype": "object"},
+        {"name": "区域", "dtype": "object"},
+        {"name": "置业顾问", "dtype": "object"},
+        {"name": "获客渠道", "dtype": "object"},
+        {"name": "户型", "dtype": "object"},
+        {"name": "客户等级", "dtype": "object"},
+        {"name": "线索日期", "dtype": "datetime64[ns]"},
+        {"name": "到访日期", "dtype": "datetime64[ns]"},
+        {"name": "认购日期", "dtype": "datetime64[ns]"},
+        {"name": "签约日期", "dtype": "datetime64[ns]"},
+        {"name": "成交金额", "dtype": "float64"},
+        {"name": "回款金额", "dtype": "float64"},
     ]
     session = database.SessionLocal()
     file_record = session.get(FileModel, "file-1")
     file_record.filepath = str(csv_path)
     file_record.filename = csv_path.name
-    file_record.row_count = 12
-    file_record.col_count = 9
+    file_record.row_count = len(rows)
+    file_record.col_count = len(columns_info)
     file_record.columns_info = columns_info
     session.commit()
     session.close()
@@ -109,17 +113,12 @@ def _group_intent():
     return AnalysisIntent.model_validate(
         {
             "analysis_type": "group_comparison",
-            "dimensions": [
-                "course_category",
-                "difficulty",
-                "channel",
-                "device",
-            ],
+            "dimensions": ["获客渠道"],
             "metrics": [
-                _metric("报名人数", None, "count"),
-                _metric("平均完成率", "completion", "mean"),
-                _metric("退款率", "refunded", "rate"),
-                _metric("平均评分", "rating", "mean"),
+                _metric("成交套数", "签约日期", "count"),
+                _metric("成交金额", "成交金额", "sum"),
+                _metric("回款金额", "回款金额", "sum"),
+                _metric("平均成交金额", None, "ratio"),
             ],
             "include_underperforming": True,
         }
@@ -130,12 +129,12 @@ def _monthly_intent():
     return AnalysisIntent.model_validate(
         {
             "analysis_type": "monthly_trend",
-            "dimensions": ["course_category"],
-            "date_field": "enrolled_at",
+            "dimensions": ["获客渠道"],
+            "date_field": "签约日期",
             "metrics": [
-                _metric("报名人数", None, "count"),
-                _metric("实付金额", "paid_amount", "sum"),
-                _metric("平均完成率", "completion", "mean"),
+                _metric("成交套数", "签约日期", "count"),
+                _metric("成交金额", "成交金额", "sum"),
+                _metric("回款金额", "回款金额", "sum"),
             ],
         }
     )
@@ -222,7 +221,7 @@ def test_two_domain_workflows_compile_execute_and_preserve_conversation(
         for item in monthly_artifacts
         if item.artifact_type == "chart"
     ]
-    assert len(monthly_charts) == 3
+    assert len(monthly_charts) == 2
     monthly_table = next(
         item
         for item in monthly_artifacts
@@ -233,9 +232,9 @@ def test_two_domain_workflows_compile_execute_and_preserve_conversation(
     ] == [
         "period",
         "series",
-        "enrollment_count",
-        "paid_amount_sum",
-        "completion_rate_mean",
+        "deal_count",
+        "deal_amount_sum",
+        "payment_amount_sum",
     ]
     assert all(
         artifact.payload_json["image_url"]
@@ -266,12 +265,12 @@ def test_invalid_intent_fails_before_tools_and_creates_no_assistant_message(
     invalid_intent = AnalysisIntent.model_validate(
         {
             "analysis_type": "monthly_trend",
-            "dimensions": ["course_category"],
+            "dimensions": ["获客渠道"],
             "date_field": "missing_date",
             "metrics": [
-                _metric("报名人数", None, "count"),
-                _metric("实付金额", "paid_amount", "sum"),
-                _metric("平均完成率", "completion", "mean"),
+                _metric("成交套数", "签约日期", "count"),
+                _metric("成交金额", "成交金额", "sum"),
+                _metric("回款金额", "回款金额", "sum"),
             ],
         }
     )

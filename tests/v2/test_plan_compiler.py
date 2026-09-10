@@ -6,7 +6,6 @@ import pytest
 from app.db.models import FileModel
 from app.v2.schemas.intents import AnalysisIntent
 from app.v2.services.plan_compiler import (
-    CompiledStep,
     PlanCompilationError,
     PlanCompiler,
     PlanValidator,
@@ -16,21 +15,25 @@ from app.v2.services.plan_compiler import (
 def dataset_record():
     return FileModel(
         id="dataset-1",
-        filename="courses.xlsx",
-        filepath="courses.xlsx",
+        filename="real-estate.xlsx",
+        filepath="real-estate.xlsx",
         file_type="xlsx",
         row_count=4,
-        col_count=8,
+        col_count=13,
         columns_info=[
-            {"name": "报名日期", "dtype": "datetime64[ns]"},
-            {"name": "课程类别", "dtype": "object"},
-            {"name": "课程难度", "dtype": "object"},
-            {"name": "购买渠道", "dtype": "object"},
-            {"name": "主要学习设备", "dtype": "object"},
-            {"name": "实付金额", "dtype": "float64"},
-            {"name": "课程完成率", "dtype": "float64"},
-            {"name": "是否退款", "dtype": "bool"},
-            {"name": "课程评分", "dtype": "float64"},
+            {"name": "项目", "dtype": "object"},
+            {"name": "城市", "dtype": "object"},
+            {"name": "区域", "dtype": "object"},
+            {"name": "置业顾问", "dtype": "object"},
+            {"name": "获客渠道", "dtype": "object"},
+            {"name": "户型", "dtype": "object"},
+            {"name": "客户等级", "dtype": "object"},
+            {"name": "线索日期", "dtype": "datetime64[ns]"},
+            {"name": "到访日期", "dtype": "datetime64[ns]"},
+            {"name": "认购日期", "dtype": "datetime64[ns]"},
+            {"name": "签约日期", "dtype": "datetime64[ns]"},
+            {"name": "成交金额", "dtype": "float64"},
+            {"name": "回款金额", "dtype": "float64"},
         ],
         profile_report="",
     )
@@ -40,23 +43,23 @@ def monthly_intent():
     return AnalysisIntent.model_validate(
         {
             "analysis_type": "monthly_trend",
-            "dimensions": ["课程类别"],
-            "date_field": "报名日期",
+            "dimensions": ["获客渠道"],
+            "date_field": "签约日期",
             "metrics": [
                 {
-                    "semantic": "报名人数",
+                    "semantic": "线索数",
                     "source_field": None,
                     "aggregation": "count",
                 },
                 {
-                    "semantic": "实付金额",
-                    "source_field": "实付金额",
+                    "semantic": "成交金额",
+                    "source_field": "成交金额",
                     "aggregation": "sum",
                 },
                 {
-                    "semantic": "平均完成率",
-                    "source_field": "课程完成率",
-                    "aggregation": "mean",
+                    "semantic": "回款金额",
+                    "source_field": "回款金额",
+                    "aggregation": "sum",
                 },
             ],
             "needs_visualization": True,
@@ -69,35 +72,34 @@ def group_intent():
         {
             "analysis_type": "group_comparison",
             "dimensions": [
-                "课程类别",
-                "课程难度",
-                "购买渠道",
-                "主要学习设备",
+                "项目",
+                "城市",
+                "区域",
+                "获客渠道",
             ],
             "metrics": [
                 {
-                    "semantic": "报名人数",
+                    "semantic": "线索数",
                     "source_field": None,
                     "aggregation": "count",
                 },
                 {
-                    "semantic": "平均完成率",
-                    "source_field": "课程完成率",
-                    "aggregation": "mean",
+                    "semantic": "成交金额",
+                    "source_field": "成交金额",
+                    "aggregation": "sum",
                 },
                 {
-                    "semantic": "退款率",
-                    "source_field": "是否退款",
-                    "aggregation": "rate",
+                    "semantic": "回款金额",
+                    "source_field": "回款金额",
+                    "aggregation": "sum",
                 },
                 {
-                    "semantic": "平均评分",
-                    "source_field": "课程评分",
-                    "aggregation": "mean",
+                    "semantic": "平均成交金额",
+                    "source_field": None,
+                    "aggregation": "ratio",
                 },
             ],
             "needs_visualization": True,
-            "include_underperforming": True,
         }
     )
 
@@ -124,8 +126,25 @@ def test_monthly_compiler_generates_fixed_server_owned_workflow():
     assert all(step.operation != "create_chart" for step in plan.steps)
 
 
-def test_group_compiler_generates_aggregate_underperforming_and_charts():
+def test_group_compiler_generates_aggregate_and_charts():
     plan = PlanCompiler().compile(group_intent(), dataset_record())
+
+    assert [step.operation for step in plan.steps] == [
+        "inspect_dataset",
+        "group_aggregate",
+        "chart_planning",
+    ]
+    assert plan.steps[-1].arguments == {
+        "source_step_ids": ["group_aggregate"]
+    }
+
+
+def test_group_compiler_includes_underperforming_step():
+    intent = group_intent().model_copy(
+        update={"include_underperforming": True}
+    )
+
+    plan = PlanCompiler().compile(intent, dataset_record())
 
     assert [step.operation for step in plan.steps] == [
         "inspect_dataset",
@@ -133,30 +152,18 @@ def test_group_compiler_generates_aggregate_underperforming_and_charts():
         "identify_underperforming",
         "chart_planning",
     ]
-    assert plan.steps[-1].arguments == {
-        "source_step_ids": ["group_aggregate", "underperforming"]
-    }
-
-
-def test_group_compiler_accepts_categorical_refund_values_for_rate():
-    record = dataset_record()
-    record.columns_info = [
-        {
-            **column,
-            "dtype": "object" if column["name"] == "是否退款" else column["dtype"],
-        }
-        for column in record.columns_info
+    underperforming = plan.step("underperforming")
+    assert underperforming.arguments["conversion_field"] == "签约日期"
+    assert underperforming.arguments["group_by"] == [
+        "项目",
+        "城市",
+        "区域",
+        "获客渠道",
     ]
-
-    plan = PlanCompiler().compile(group_intent(), record)
-
-    refund_metric = next(
-        metric
-        for metric in plan.intent.metrics
-        if metric.semantic == "退款率"
-    )
-    assert refund_metric.source_field == "是否退款"
-    assert refund_metric.aggregation == "rate"
+    assert [item.id for item in underperforming.output_schema.metrics] == [
+        "lead_count",
+        "deal_rate",
+    ]
 
 
 def test_monthly_schema_uses_stable_ids_and_units():
@@ -165,12 +172,12 @@ def test_monthly_schema_uses_stable_ids_and_units():
 
     assert [(item.id, item.label, item.role) for item in schema.dimensions] == [
         ("period", "月份", "time"),
-        ("series", "课程类别", "series"),
+        ("series", "获客渠道", "series"),
     ]
     assert [(item.id, item.label, item.unit) for item in schema.metrics] == [
-        ("enrollment_count", "报名人数", "count"),
-        ("paid_amount_sum", "实付金额", "currency"),
-        ("completion_rate_mean", "平均完成率", "percentage"),
+        ("lead_count", "线索数", "count"),
+        ("deal_amount_sum", "成交金额", "currency"),
+        ("payment_amount_sum", "回款金额", "currency"),
     ]
     assert schema.time_granularity == "month"
 
@@ -186,10 +193,10 @@ def test_group_schema_uses_stable_dimension_and_metric_ids():
         "dimension_4",
     ]
     assert [item.id for item in schema.metrics] == [
-        "sample_count",
-        "completion_rate_mean",
-        "refund_rate",
-        "rating_mean",
+        "lead_count",
+        "deal_amount_sum",
+        "payment_amount_sum",
+        "avg_deal_amount",
     ]
 
 
@@ -206,7 +213,7 @@ def test_validator_rejects_missing_fields_and_wrong_data_types():
             "metrics": [
                 monthly_intent().metrics[0],
                 monthly_intent().metrics[1].model_copy(
-                    update={"source_field": "课程类别"}
+                    update={"source_field": "获客渠道"}
                 ),
             ]
         }
@@ -223,7 +230,7 @@ def test_validator_rejects_raw_date_as_aggregated_chart_axis_before_execution():
         chart_step,
         arguments={
             "source_step_ids": ["monthly_aggregate"],
-            "x_field": "报名日期",
+            "x_field": "签约日期",
         },
     )
     invalid_plan = replace(
@@ -243,10 +250,10 @@ def test_validator_rejects_raw_date_as_aggregated_chart_axis_before_execution():
 def test_validator_rejects_unparseable_monthly_date_values():
     frame = pd.DataFrame(
         {
-            "报名日期": ["not-a-date", "still-not-a-date"],
-            "课程类别": ["A", "B"],
-            "实付金额": [10, 20],
-            "课程完成率": [0.5, 0.6],
+            "签约日期": ["not-a-date", "still-not-a-date"],
+            "获客渠道": ["自然到访", "渠道分销"],
+            "成交金额": [1000000, 2000000],
+            "回款金额": [500000, 1200000],
         }
     )
     validator = PlanValidator(dataframe_loader=lambda _path: frame)

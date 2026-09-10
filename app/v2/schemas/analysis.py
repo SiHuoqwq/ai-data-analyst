@@ -7,7 +7,7 @@ class StrictAnalysisModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-Aggregation = Literal["count", "sum", "mean", "min", "max", "rate"]
+Aggregation = Literal["count", "sum", "mean", "min", "max", "ratio"]
 FilterOperator = Literal[
     "eq",
     "ne",
@@ -24,14 +24,33 @@ FilterOperator = Literal[
 
 
 class MetricSpec(StrictAnalysisModel):
+    kind: Literal["base", "derived"] = "base"
     field: str | None = Field(default=None, max_length=256)
-    aggregation: Aggregation
+    aggregation: Aggregation | None = Field(default=None)
     alias: str = Field(min_length=1, max_length=256)
+    numerator_metric_id: str | None = Field(default=None, max_length=256)
+    denominator_metric_id: str | None = Field(default=None, max_length=256)
 
     @model_validator(mode="after")
-    def require_field_for_value_aggregations(self):
-        if self.aggregation != "count" and not self.field:
-            raise ValueError("field is required for this aggregation")
+    def validate_metric_spec(self):
+        if self.kind == "base":
+            if self.aggregation is None:
+                raise ValueError("base metric requires an aggregation")
+            if self.aggregation != "count" and not self.field:
+                raise ValueError("field is required for this aggregation")
+            if self.numerator_metric_id or self.denominator_metric_id:
+                raise ValueError(
+                    "base metric must not reference numerator/denominator"
+                )
+        else:
+            if self.aggregation is not None:
+                raise ValueError("derived metric must not define an aggregation")
+            if self.field is not None:
+                raise ValueError("derived metric must not define a field")
+            if not (self.numerator_metric_id and self.denominator_metric_id):
+                raise ValueError(
+                    "derived metric requires numerator and denominator ids"
+                )
         return self
 
 
@@ -68,10 +87,10 @@ class MonthlyTrendInput(StrictAnalysisModel):
 
 class UnderperformingInput(StrictAnalysisModel):
     group_by: list[str] = Field(min_length=1, max_length=4)
-    completion_field: str = Field(min_length=1, max_length=256)
+    conversion_field: str = Field(min_length=1, max_length=256)
     min_sample_size: int = Field(default=5, ge=1, le=100_000)
     high_volume_quantile: float = Field(default=0.75, ge=0, le=1)
-    low_completion_quantile: float = Field(default=0.25, ge=0, le=1)
+    low_conversion_quantile: float = Field(default=0.25, ge=0, le=1)
     limit: int = Field(default=20, ge=1, le=100)
 
 
@@ -124,12 +143,24 @@ class ModelPlanDraft(StrictAnalysisModel):
     steps: list[PlanStepDraft] = Field(min_length=1, max_length=6)
 
 
+def _minimize_schema(schema: Any) -> Any:
+    if isinstance(schema, dict):
+        return {
+            key: _minimize_schema(value)
+            for key, value in schema.items()
+            if key != "title"
+        }
+    if isinstance(schema, list):
+        return [_minimize_schema(item) for item in schema]
+    return schema
+
+
 def model_tool_catalog() -> list[dict[str, Any]]:
     descriptions = {
         "inspect_dataset": "检查字段、类型和缺失情况，不读取原始样例值。",
         "group_aggregate": "按一个或多个维度计算计数、金额、均值或布尔比例。",
         "monthly_trend": "按月份和类别计算多个聚合指标。",
-        "identify_underperforming": "用分位数和最小样本量识别高报名低完成组合。",
+        "identify_underperforming": "用分位数和最小样本量识别高线索量低成交转化率组合。",
         "create_chart": "基于本次运行已有步骤结果生成柱状图或折线图。",
     }
     return [
@@ -144,7 +175,7 @@ def model_tool_catalog() -> list[dict[str, Any]]:
                 if name == "inspect_dataset"
                 else ["table"]
             ),
-            "input_schema": model.model_json_schema(),
+            "input_schema": _minimize_schema(model.model_json_schema()),
         }
         for name, model in TOOL_INPUT_MODELS.items()
     ]

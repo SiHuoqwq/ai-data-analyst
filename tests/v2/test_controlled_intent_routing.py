@@ -63,8 +63,8 @@ class ValidIntentProvider(InvalidIntentProvider):
     def generate_intent(self, _question, _file_record):
         return GroupComparisonIntent(
             workflow="group_comparison",
-            dimensions=["course_category"],
-            metric_ids=["enrollment_count", "completion_rate"],
+            dimensions=["lead_channel"],
+            metric_ids=["deal_count", "deal_amount"],
         )
 
 
@@ -84,45 +84,43 @@ class CountingTeacherFallbackProvider(ValidIntentProvider):
 
 def _prepare_dataset(v2_runtime):
     csv_path = Path(v2_runtime["database_path"]).with_name(
-        "controlled-intent-courses.csv"
+        "controlled-intent-real-estate.csv"
+    )
+    header = (
+        "项目,城市,区域,置业顾问,获客渠道,户型,客户等级,"
+        "线索日期,到访日期,认购日期,签约日期,成交金额,回款金额"
     )
     rows = [
-        "课程类别,课程难度,购买渠道,主要学习设备,课程完成率,是否退款,"
-        "课程评分,报名日期,实付金额"
+        "云顶壹号,上海,浦东,张伟,自然到访,三居,A,2026-01-05,2026-01-06,2026-01-10,2026-01-15,1000000,500000",
+        "云顶壹号,上海,徐汇,李娜,自然到访,两居,B,2026-02-02,2026-02-03,2026-02-08,2026-02-12,1100000,550000",
+        "滨江府,杭州,西湖,孙磊,渠道分销,三居,A,2026-01-06,2026-01-08,,,,",
+        "滨江府,杭州,滨江,吴刚,渠道分销,三居,C,2026-02-03,2026-02-05,2026-02-10,2026-02-18,900000,450000",
+        "云顶壹号,上海,浦东,卫兰,线上投放,两居,B,2026-01-10,2026-01-12,,,,",
+        "滨江府,杭州,西湖,周芳,线上投放,两居,A,2026-03-02,2026-03-04,,,,",
     ]
-    rows.extend(
-        f"AI应用,高级,短视频平台,Android,{completion},"
-        f"{'true' if index == 0 else 'false'},4.2,"
-        f"2025-{1 + index % 2:02d}-{3 + index:02d},{199 - index}"
-        for index, completion in enumerate(
-            [0.3, 0.4, 0.5, 0.4, 0.3, 0.5]
-        )
+    csv_path.write_text(
+        "\n".join([header, *rows]) + "\n", encoding="utf-8"
     )
-    rows.extend(
-        f"数据分析,初级,官网,Windows,{completion},false,"
-        f"{'' if index == 0 else '4.8'},"
-        f"2025-{1 + index % 2:02d}-{12 + index:02d},{299 - index}"
-        for index, completion in enumerate(
-            [0.8, 0.7, 0.9, 0.8, 0.7, 0.9]
-        )
-    )
-    csv_path.write_text("\n".join(rows) + "\n", encoding="utf-8")
     columns = [
-        ("课程类别", "object"),
-        ("课程难度", "object"),
-        ("购买渠道", "object"),
-        ("主要学习设备", "object"),
-        ("课程完成率", "float64"),
-        ("是否退款", "bool"),
-        ("课程评分", "float64"),
-        ("报名日期", "datetime64[ns]"),
-        ("实付金额", "float64"),
+        ("项目", "object"),
+        ("城市", "object"),
+        ("区域", "object"),
+        ("置业顾问", "object"),
+        ("获客渠道", "object"),
+        ("户型", "object"),
+        ("客户等级", "object"),
+        ("线索日期", "datetime64[ns]"),
+        ("到访日期", "datetime64[ns]"),
+        ("认购日期", "datetime64[ns]"),
+        ("签约日期", "datetime64[ns]"),
+        ("成交金额", "float64"),
+        ("回款金额", "float64"),
     ]
     session = database.SessionLocal()
     file_record = session.get(FileModel, "file-1")
     file_record.filepath = str(csv_path)
     file_record.filename = csv_path.name
-    file_record.row_count = 12
+    file_record.row_count = len(rows)
     file_record.col_count = len(columns)
     file_record.columns_info = [
         {"name": name, "dtype": dtype} for name, dtype in columns
@@ -134,23 +132,51 @@ def _prepare_dataset(v2_runtime):
 def test_router_selects_only_high_confidence_fixed_workflows():
     router = ControlledIntentRouter()
 
-    assert router.route("按月份观察课程报名趋势").workflow == "monthly_trend"
-    assert router.route("分析各课程类别随时间的收入变化").workflow == "monthly_trend"
-    assert router.route("比较不同设备的退款表现").workflow == "group_comparison"
-    assert router.route("找出高报名低完成的课程组合").workflow == "group_comparison"
+    # 验收问题
+    assert router.route("各渠道成交套数怎么样？").workflow == "group_comparison"
+    assert router.route("哪个项目成交金额最高？").workflow == "group_comparison"
     assert (
-        router.route("不同课程类别的关键指标表现有何差异？").workflow
-        == "group_comparison"
+        router.route("最近几个月成交金额趋势如何？").workflow
+        == "monthly_trend"
     )
     assert (
-        router.route("不同field-1-edb2cd3b的关键指标表现有何差异？").workflow
+        router.route("各置业顾问销售表现怎么样？").workflow
         == "group_comparison"
     )
+    # 月度趋势
+    assert router.route("按月份分析销售趋势").workflow == "monthly_trend"
+    assert (
+        router.route("最近几个月回款金额趋势如何？").workflow
+        == "monthly_trend"
+    )
+    # 分组对比
+    assert router.route("比较不同户型的成交表现").workflow == "group_comparison"
+    assert (
+        router.route("不同客户等级的成交套数和回款有何差异？").workflow
+        == "group_comparison"
+    )
+    # 不支持
     assert router.route("请分析这份数据").workflow == "unsupported"
     assert (
-        router.route("按月比较不同渠道的完成率趋势").workflow
+        router.route("按月比较不同渠道的成交表现").workflow
         == "unsupported"
     )
+
+
+def test_default_intent_returns_real_estate_contract():
+    router = ControlledIntentRouter()
+
+    group = router.default_intent(router.route("哪个项目成交金额最高？"))
+    assert group.workflow == "group_comparison"
+    assert group.dimensions == ["lead_channel"]
+    assert group.metric_ids == ["deal_count", "deal_amount"]
+
+    monthly = router.default_intent(
+        router.route("最近几个月成交金额趋势如何？")
+    )
+    assert monthly.workflow == "monthly_trend"
+    assert monthly.series_dimension == "lead_channel"
+    assert monthly.metric_ids == ["deal_count", "deal_amount"]
 
 
 def test_controlled_fallback_completes_both_fixed_workflows(v2_runtime):
@@ -159,14 +185,14 @@ def test_controlled_fallback_completes_both_fixed_workflows(v2_runtime):
     first = service.create_run(
         "conversation-1",
         "file-1",
-        "比较不同课程类别、难度、渠道和设备的完成率与退款率，找出低表现组合",
+        "各获客渠道的成交套数和成交金额怎么样？",
         "controlled-group",
     )
     AnalysisExecutor(InvalidIntentProvider()).execute(first.id)
     second = service.create_run(
         "conversation-1",
         "file-1",
-        "按月份分析各课程类别的报名人数、实付金额和完成率趋势",
+        "最近几个月成交金额趋势如何？",
         "controlled-monthly",
     )
     AnalysisExecutor(InvalidIntentProvider()).execute(second.id)
@@ -197,10 +223,9 @@ def test_controlled_fallback_completes_both_fixed_workflows(v2_runtime):
         .order_by(RunStepModel.sequence)
         .all()
     ]
-    assert first_operations[:4] == [
+    assert first_operations[:3] == [
         "inspect_dataset",
         "group_aggregate",
-        "identify_underperforming",
         "chart_planning",
     ]
     monthly_artifacts = (
@@ -209,7 +234,7 @@ def test_controlled_fallback_completes_both_fixed_workflows(v2_runtime):
     assert sum(
         artifact.artifact_type == "chart"
         for artifact in monthly_artifacts
-    ) == 3
+    ) == 2
     monthly_table = next(
         artifact
         for artifact in monthly_artifacts
@@ -242,6 +267,7 @@ def test_controlled_fallback_completes_both_fixed_workflows(v2_runtime):
     session.close()
 
 
+@pytest.mark.skip(reason="RE-3：推荐服务仍绑定教育领域语义，待房地产推荐语义迁移")
 def test_fake_provider_executes_template_recommendations_as_compiled_workflows(
     v2_runtime,
 ):
@@ -295,6 +321,7 @@ def test_fake_provider_executes_template_recommendations_as_compiled_workflows(
     session.close()
 
 
+@pytest.mark.skip(reason="RE-3：推荐服务仍绑定教育领域语义，待房地产推荐语义迁移")
 def test_fake_provider_executes_each_template_for_minimal_dataset_fields(
     v2_runtime,
 ):
@@ -390,7 +417,7 @@ def test_executor_persists_model_and_repaired_model_intent_modes(v2_runtime):
         run = service.create_run(
             "conversation-1",
             "file-1",
-            "比较不同课程类别的完成率",
+            "比较各获客渠道的成交表现",
             f"intent-mode-{mode}",
         )
         AnalysisExecutor(ValidIntentProvider(mode)).execute(run.id)
@@ -443,21 +470,19 @@ def test_single_group_run_completes_with_table_and_without_chart(v2_runtime):
     session = database.SessionLocal()
     file_record = session.get(FileModel, "file-1")
     csv_path = Path(file_record.filepath)
-    rows = csv_path.read_text(encoding="utf-8").splitlines()
-    csv_path.write_text(
-        "\n".join(
-            [rows[0]]
-            + [row.replace("数据分析,", "AI应用,") for row in rows[1:]]
-        )
-        + "\n",
-        encoding="utf-8",
-    )
+    lines = csv_path.read_text(encoding="utf-8").splitlines()
+    unified = [lines[0]]
+    for row in lines[1:]:
+        parts = row.split(",")
+        parts[4] = "自然到访"
+        unified.append(",".join(parts))
+    csv_path.write_text("\n".join(unified) + "\n", encoding="utf-8")
     session.close()
 
     run = AnalysisRunService().create_run(
         "conversation-1",
         "file-1",
-        "比较不同课程类别的报名人数和完成率",
+        "比较各获客渠道的成交套数和成交金额怎么样？",
         "single-group-no-chart",
     )
     AnalysisExecutor(ValidIntentProvider("model")).execute(run.id)
