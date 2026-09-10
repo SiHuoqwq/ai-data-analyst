@@ -100,9 +100,9 @@ describe('V2 API client', () => {
         recommendations: [{
           id: 'recommendation-1',
           intent_type: 'group_comparison',
-          label: '课程组合比较',
-          question: '比较课程类别与完成率。',
-          referenced_fields: ['课程类别', '完成率'],
+          label: '渠道成交表现',
+          question: '比较各获客渠道的成交表现。',
+          referenced_fields: ['获客渠道', '成交转化率'],
         }],
       },
       meta: metaFixture,

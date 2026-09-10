@@ -28,4 +28,10 @@ describe('AppRoutes', () => {
     expect(screen.queryByText('分析工作台正在升级')).not.toBeInTheDocument()
     expect(screen.queryByText(/V2|AnalysisRun|Artifact/)).not.toBeInTheDocument()
   })
+
+  it('品牌副标题为房地产销售经营分析工作台', () => {
+    renderRoute('/not-a-real-page')
+    expect(screen.getByText('房地产销售经营分析工作台')).toBeInTheDocument()
+    expect(screen.queryByText('AI 数据分析工作台')).not.toBeInTheDocument()
+  })
 })

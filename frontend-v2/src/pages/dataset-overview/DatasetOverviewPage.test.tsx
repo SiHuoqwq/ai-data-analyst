@@ -64,7 +64,7 @@ describe('DatasetOverviewPage', () => {
 
   it('默认展示前四个问题并支持原地展开和收起', () => {
     conversationState.data = [{
-      id: 'conversation-1', file_id: 'file-1', title: '多轮课程分析', mode: 'agent',
+      id: 'conversation-1', file_id: 'file-1', title: '多轮销售分析', mode: 'agent',
       created_at: '2026-08-13T09:00:00Z', message_count: 12,
       user_questions: ['问题一', '问题二', '问题三', '问题四', '问题五', '问题六'],
     }]
@@ -73,7 +73,7 @@ describe('DatasetOverviewPage', () => {
     expect(screen.getByText('问题一')).toBeInTheDocument()
     expect(screen.getByText('问题四')).toBeInTheDocument()
     expect(screen.queryByText('问题五')).not.toBeInTheDocument()
-    const conversationLink = screen.getByRole('link', { name: /多轮课程分析/ })
+    const conversationLink = screen.getByRole('link', { name: /多轮销售分析/ })
     expect(conversationLink).toHaveAttribute(
       'href',
       '/datasets/file-1/analysis?conversationId=conversation-1',

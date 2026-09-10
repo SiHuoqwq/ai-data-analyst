@@ -185,16 +185,16 @@ describe('AnalysisWorkbenchPage', () => {
           {
             id: 'recommendation-1',
             intent_type: 'group_comparison',
-            label: '课程组合比较',
-            question: '比较课程类别与完成率。',
-            referenced_fields: ['课程类别', '完成率'],
+            label: '渠道成交表现',
+            question: '比较各获客渠道的成交表现。',
+            referenced_fields: ['获客渠道', '成交转化率'],
           },
           {
             id: 'recommendation-2',
             intent_type: 'monthly_trend',
-            label: '月度趋势分析',
-            question: '查看每月报名趋势。',
-            referenced_fields: ['报名日期', '报名人数'],
+            label: '月度成交趋势',
+            question: '查看每月成交金额趋势。',
+            referenced_fields: ['线索日期', '成交金额'],
           },
         ],
       },
@@ -252,17 +252,17 @@ describe('AnalysisWorkbenchPage', () => {
     const user = userEvent.setup()
 
     renderSwitchablePage()
-    expect(screen.getByText('模型选题')).toBeInTheDocument()
-    expect(screen.getByText('课程组合比较')).toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: '使用课程组合比较推荐' }))
-    expect(screen.getByLabelText('输入分析问题')).toHaveValue('比较课程类别与完成率。')
+    expect(screen.getByText('推荐分析')).toBeInTheDocument()
+    expect(screen.getByText('渠道成交表现')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '使用渠道成交表现推荐' }))
+    expect(screen.getByLabelText('输入分析问题')).toHaveValue('比较各获客渠道的成交表现。')
 
     await user.click(screen.getByRole('button', { name: '切换到数据集 file-2' }))
 
     expect(screen.getByLabelText('输入分析问题')).toHaveValue('')
-    expect(screen.getByText('字段模板')).toBeInTheDocument()
+    expect(screen.getByText('推荐分析')).toBeInTheDocument()
     expect(screen.getByText('区域月度变化')).toBeInTheDocument()
-    expect(screen.queryByText('课程组合比较')).not.toBeInTheDocument()
+    expect(screen.queryByText('渠道成交表现')).not.toBeInTheDocument()
   })
 
   it('renders a partial one-card recommendation response', () => {
@@ -270,8 +270,8 @@ describe('AnalysisWorkbenchPage', () => {
 
     renderPage()
 
-    expect(screen.getByRole('button', { name: '使用课程组合比较推荐' })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: '使用月度趋势分析推荐' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '使用渠道成交表现推荐' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '使用月度成交趋势推荐' })).not.toBeInTheDocument()
   })
 
   it('keeps manual input available when recommendations cannot be loaded', () => {
@@ -288,8 +288,8 @@ describe('AnalysisWorkbenchPage', () => {
     renderPage()
     const input = screen.getByLabelText('输入分析问题')
 
-    await user.click(screen.getByRole('button', { name: '使用课程组合比较推荐' }))
-    expect(input).toHaveValue('比较课程类别与完成率。')
+    await user.click(screen.getByRole('button', { name: '使用渠道成交表现推荐' }))
+    expect(input).toHaveValue('比较各获客渠道的成交表现。')
     expect(createConversation).not.toHaveBeenCalled()
     expect(createRun).not.toHaveBeenCalled()
   })
@@ -298,12 +298,12 @@ describe('AnalysisWorkbenchPage', () => {
     const user = userEvent.setup()
     renderPage()
 
-    await user.click(screen.getByRole('button', { name: '使用课程组合比较推荐' }))
+    await user.click(screen.getByRole('button', { name: '使用渠道成交表现推荐' }))
     await user.click(screen.getByRole('button', { name: '开始分析' }))
 
     await waitFor(() => expect(createRun).toHaveBeenCalledWith(expect.objectContaining({
       input: expect.objectContaining({
-        message: '比较课程类别与完成率。',
+        message: '比较各获客渠道的成交表现。',
         dataset_version_id: 'file-1',
         recommendation_id: 'recommendation-1',
       }),
@@ -315,13 +315,13 @@ describe('AnalysisWorkbenchPage', () => {
     renderPage()
     const input = screen.getByLabelText('输入分析问题')
 
-    await user.click(screen.getByRole('button', { name: '使用课程组合比较推荐' }))
+    await user.click(screen.getByRole('button', { name: '使用渠道成交表现推荐' }))
     await user.type(input, ' ')
     await user.click(screen.getByRole('button', { name: '开始分析' }))
 
     await waitFor(() => expect(createRun).toHaveBeenCalled())
     const submitted = createRun.mock.calls[0][0].input
-    expect(submitted.message).toBe('比较课程类别与完成率。')
+    expect(submitted.message).toBe('比较各获客渠道的成交表现。')
     expect(submitted).not.toHaveProperty('recommendation_id')
   })
 

@@ -69,17 +69,17 @@ describe('ArtifactView', () => {
   it('renders a compact summary without claiming a comparison for one row', () => {
     render(<ArtifactView artifact={artifact('table', {
       columns: [
-        { key: 'category', label: '课程类别', data_type: 'string' },
-        { key: 'enrollment_count', label: '报名人数', data_type: 'number' },
-        { key: 'completion_rate', label: '平均完成率', data_type: 'number' },
+        { key: 'channel', label: '获客渠道', data_type: 'string' },
+        { key: 'lead_count', label: '线索数', data_type: 'number' },
+        { key: 'deal_rate', label: '成交转化率', data_type: 'number' },
       ],
-      rows: [{ category: 'AI 应用', enrollment_count: 153, completion_rate: 0.512 }],
+      rows: [{ channel: '短视频平台', lead_count: 150, deal_rate: 0.0533 }],
     })} />)
 
     expect(screen.getByRole('heading', { name: '单对象概览' })).toBeInTheDocument()
-    expect(screen.getAllByText('AI 应用').length).toBeGreaterThan(0)
-    expect(screen.getAllByText('报名人数')).toHaveLength(2)
-    expect(screen.getAllByText('153')).toHaveLength(2)
+    expect(screen.getAllByText('短视频平台').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('线索数')).toHaveLength(2)
+    expect(screen.getAllByText('150')).toHaveLength(2)
     expect(screen.getByText('当前结果仅包含 1 个对象，无法进行组间比较。')).toBeInTheDocument()
     expect(screen.getByRole('table', { name: '分析结果' })).toBeInTheDocument()
   })

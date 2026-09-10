@@ -377,9 +377,7 @@ export function AnalysisWorkbenchPage() {
         {recommendations.isPending && <p aria-live="polite">正在准备推荐问题</p>}
         {recommendations.isError && <p role="status">推荐问题暂时不可用</p>}
         {recommendations.data && <>
-          <span className="eyebrow">
-            {recommendations.data.source === 'model' ? '模型选题' : '字段模板'}
-          </span>
+          <span className="eyebrow">推荐分析</span>
           <div className="example-questions" aria-label="数据集推荐问题">
             {recommendations.data.recommendations.map((recommendation) => <button
               type="button"
