@@ -101,7 +101,7 @@ def valid_generation() -> RawGeneration:
                 intent_type="group_comparison",
                 label="Duplicate group candidate",
                 question="This duplicate must not be stored.",
-                referenced_fields=["category"],
+                referenced_fields=["category", "completion_rate"],
             ),
             RecommendationCandidate(
                 intent_type="monthly_trend",
@@ -215,6 +215,120 @@ def test_template_candidates_use_registered_integer_metric_contracts(
     assert candidates[1].referenced_fields == monthly_fields
 
 
+def complete_real_estate_columns():
+    return [
+        {"name": "项目", "dtype": "object"},
+        {"name": "城市", "dtype": "object"},
+        {"name": "区域", "dtype": "object"},
+        {"name": "置业顾问", "dtype": "object"},
+        {"name": "获客渠道", "dtype": "object"},
+        {"name": "户型", "dtype": "object"},
+        {"name": "客户等级", "dtype": "object"},
+        {"name": "线索日期", "dtype": "datetime64[ns]"},
+        {"name": "到访日期", "dtype": "datetime64[ns]"},
+        {"name": "认购日期", "dtype": "datetime64[ns]"},
+        {"name": "签约日期", "dtype": "datetime64[ns]"},
+        {"name": "成交金额", "dtype": "float64"},
+        {"name": "回款金额", "dtype": "float64"},
+    ]
+
+
+def test_template_candidates_cover_business_directions_for_complete_dataset():
+    record = FileModel(
+        id="complete-real-estate",
+        filename="complete-real-estate.csv",
+        filepath="complete-real-estate.csv",
+        file_type="csv",
+        row_count=2,
+        col_count=13,
+        columns_info=complete_real_estate_columns(),
+        profile_report="",
+    )
+
+    candidates = DatasetRecommendationService()._template_candidates(record)
+
+    assert len(candidates) == 6
+    assert [c.intent_type for c in candidates].count("group_comparison") == 5
+    assert [c.intent_type for c in candidates].count("monthly_trend") == 1
+
+    underperforming = [
+        c for c in candidates if getattr(c, "detect_underperforming", False)
+    ]
+    assert len(underperforming) == 1
+    assert underperforming[0].referenced_fields == ["获客渠道", "签约日期"]
+
+    group_dimensions = [
+        c.referenced_fields[0]
+        for c in candidates
+        if c.intent_type == "group_comparison"
+        and not getattr(c, "detect_underperforming", False)
+    ]
+    assert group_dimensions == ["获客渠道", "项目", "置业顾问", "户型"]
+
+
+def test_template_candidates_skip_missing_dimensions_and_underperforming():
+    record = FileModel(
+        id="partial-real-estate",
+        filename="partial-real-estate.csv",
+        filepath="partial-real-estate.csv",
+        file_type="csv",
+        row_count=2,
+        col_count=4,
+        columns_info=[
+            {"name": "获客渠道", "dtype": "object"},
+            {"name": "户型", "dtype": "object"},
+            {"name": "线索日期", "dtype": "datetime64[ns]"},
+            {"name": "成交金额", "dtype": "float64"},
+        ],
+        profile_report="",
+    )
+
+    candidates = DatasetRecommendationService()._template_candidates(record)
+
+    group_dimensions = [
+        c.referenced_fields[0]
+        for c in candidates
+        if c.intent_type == "group_comparison"
+        and not getattr(c, "detect_underperforming", False)
+    ]
+    assert group_dimensions == ["获客渠道", "户型"]
+    assert not any(
+        getattr(c, "detect_underperforming", False) for c in candidates
+    )
+    assert any(c.intent_type == "monthly_trend" for c in candidates)
+
+
+def test_complete_dataset_yields_four_to_six_diverse_recommendations(
+    v2_runtime, tmp_path
+):
+    add_dataset(
+        tmp_path,
+        dataset_id="complete-re",
+        columns=complete_real_estate_columns(),
+        content=(
+            "项目,城市,区域,置业顾问,获客渠道,户型,客户等级,"
+            "线索日期,到访日期,认购日期,签约日期,成交金额,回款金额\n"
+            "云顶壹号,上海,浦东,张伟,自然到访,三居,A,"
+            "2026-01-05,2026-01-06,2026-01-10,2026-01-15,1000000,500000\n"
+            "滨江府,杭州,西湖,李娜,渠道分销,两居,B,"
+            "2026-02-02,2026-02-03,2026-02-08,2026-02-12,1100000,550000\n"
+        ),
+    )
+    fake = StubProvider(RecommendationGeneration(candidates=[]), name="fake")
+
+    result = DatasetRecommendationService().get_or_generate("complete-re", fake)
+
+    assert result.source == "template"
+    assert 4 <= len(result.recommendations) <= 6
+    labels = [item["label"] for item in result.recommendations]
+    assert any("获客渠道" in label for label in labels)
+    assert any("项目" in label for label in labels)
+    assert any("置业顾问" in label for label in labels)
+    assert any("户型" in label for label in labels)
+    assert any("月度趋势" in label for label in labels)
+    assert any("排查" in label for label in labels)
+
+
 def test_cache_miss_validates_and_persists_one_model_candidate_per_intent(
     v2_runtime, tmp_path
 ):
@@ -255,7 +369,7 @@ def test_cache_miss_validates_and_persists_one_model_candidate_per_intent(
         assert stored.source == "model"
         assert stored.provider_name == "stub-model"
         assert stored.provider_model == "stub-v1"
-        assert all(set(item) == {"id", "intent_type", "label", "question", "referenced_fields"} for item in stored.recommendations_json)
+        assert all(set(item) == {"id", "intent_type", "label", "question", "referenced_fields", "detect_underperforming"} for item in stored.recommendations_json)
         stored_text = str(stored.recommendations_json)
         assert "PROMPT_MARKER" not in stored_text
         assert "RAW_RESPONSE_MARKER" not in stored_text

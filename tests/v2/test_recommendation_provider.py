@@ -578,6 +578,10 @@ def test_deepseek_drops_extra_key_candidate_item_without_losing_valid_sibling():
                 {"intent_type": "group_comparison", "referenced_fields": ["a"]},
                 {"intent_type": "group_comparison", "referenced_fields": ["b"]},
                 {"intent_type": "group_comparison", "referenced_fields": ["c"]},
+                {"intent_type": "group_comparison", "referenced_fields": ["d"]},
+                {"intent_type": "group_comparison", "referenced_fields": ["e"]},
+                {"intent_type": "group_comparison", "referenced_fields": ["f"]},
+                {"intent_type": "group_comparison", "referenced_fields": ["g"]},
             ]
         },
     ],

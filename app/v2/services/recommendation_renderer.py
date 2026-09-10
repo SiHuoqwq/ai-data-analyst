@@ -29,6 +29,11 @@ class DeterministicRecommendationRenderer:
                 f"{dimension}月度趋势",
                 f"查看{dimension}各月份的变化趋势",
             )
+        if getattr(candidate, "detect_underperforming", False):
+            return (
+                f"低转化{dimension}排查",
+                f"哪些{dimension}线索多但成交转化率偏低？",
+            )
         return (
             f"按{dimension}比较",
             f"比较不同{dimension}的关键指标表现有何差异？",

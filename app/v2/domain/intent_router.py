@@ -20,9 +20,22 @@ class IntentRoutingDecision:
     workflow: WorkflowDecision
     group_score: int
     monthly_score: int
+    derived_rate_metric: str | None = None
 
 
 class ControlledIntentRouter:
+    monthly_derived_rate_signals = {
+        "成交转化率": "deal_rate",
+        "成交率": "deal_rate",
+        "到访率": "visit_rate",
+        "认购转化率": "subscription_rate",
+        "认购率": "subscription_rate",
+    }
+    _derived_rate_labels = {
+        "deal_rate": "成交转化率",
+        "visit_rate": "到访率",
+        "subscription_rate": "认购转化率",
+    }
     monthly_signals = {
         "最近几个月": 4,
         "按月": 4,
@@ -79,7 +92,31 @@ class ControlledIntentRouter:
             workflow = "monthly_trend"
         else:
             workflow = "group_comparison"
-        return IntentRoutingDecision(workflow, group, monthly)
+        derived_rate_metric: str | None = None
+        if workflow == "monthly_trend":
+            derived_rate_metric = self._detect_derived_rate(normalized)
+            if derived_rate_metric is not None:
+                workflow = "unsupported"
+        return IntentRoutingDecision(
+            workflow,
+            group,
+            monthly,
+            derived_rate_metric,
+        )
+
+    def monthly_derived_rate_refusal(self, metric_id: str) -> str:
+        label = self._derived_rate_labels.get(metric_id, metric_id)
+        return (
+            f"当前暂不支持{label}的月度趋势分析，"
+            "可以分析成交套数、成交金额或回款金额的月度趋势。"
+        )
+
+    @classmethod
+    def _detect_derived_rate(cls, question: str) -> str | None:
+        for phrase, metric_id in cls.monthly_derived_rate_signals.items():
+            if phrase in question:
+                return metric_id
+        return None
 
     def default_intent(
         self,

@@ -171,5 +171,6 @@ def recommendation_validation_intents(
                 metric_fields,
                 {"到访数", "认购数", "成交套数", "成交金额", "回款金额"},
             ),
+            include_underperforming=candidate.detect_underperforming,
         )
     ]

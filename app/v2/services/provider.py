@@ -95,7 +95,7 @@ RECOMMENDATION_SELECTION_SCHEMA = {
     "properties": {
         "candidates": {
             "type": "array",
-            "maxItems": 2,
+            "maxItems": 6,
             "items": {
                 "type": "object",
                 "additionalProperties": False,
@@ -215,6 +215,14 @@ class FakeAnalysisProvider:
         if question == "[fake:fail]":
             raise RuntimeError("controlled fake provider failure")
         decision = self._intent_router.route(question)
+        if decision.derived_rate_metric is not None:
+            raise ProviderError(
+                "UNSUPPORTED_MONTHLY_METRIC",
+                self._intent_router.monthly_derived_rate_refusal(
+                    decision.derived_rate_metric
+                ),
+                retryable=False,
+            )
         if decision.workflow == "unsupported":
             raise ProviderError(
                 "FAKE_SAFE_PLAN_FALLBACK",

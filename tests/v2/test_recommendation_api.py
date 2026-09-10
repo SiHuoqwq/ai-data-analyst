@@ -89,7 +89,14 @@ def test_get_recommendations_returns_strict_fake_templates_and_cached_result(
         }
         assert all(
             set(item)
-            == {"id", "intent_type", "label", "question", "referenced_fields"}
+            == {
+                "id",
+                "intent_type",
+                "label",
+                "question",
+                "referenced_fields",
+                "detect_underperforming",
+            }
             for item in body["data"]["recommendations"]
         )
         assert set(body["meta"]) == {

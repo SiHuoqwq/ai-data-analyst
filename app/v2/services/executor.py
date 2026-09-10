@@ -149,6 +149,14 @@ class AnalysisExecutor:
                             raise
                         else:
                             decision = self.intent_router.route(question)
+                            if decision.derived_rate_metric is not None:
+                                raise ProviderError(
+                                    "UNSUPPORTED_MONTHLY_METRIC",
+                                    self.intent_router.monthly_derived_rate_refusal(
+                                        decision.derived_rate_metric
+                                    ),
+                                    retryable=False,
+                                ) from intent_error
                             if decision.workflow == "unsupported":
                                 raise ProviderError(
                                     "UNSUPPORTED_ANALYSIS_INTENT",

@@ -100,6 +100,7 @@ class DatasetRecommendation(APIModel):
     label: str
     question: str
     referenced_fields: list[str]
+    detect_underperforming: bool = False
 
 
 class DatasetRecommendations(APIModel):

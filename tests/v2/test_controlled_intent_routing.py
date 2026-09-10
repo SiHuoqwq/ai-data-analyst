@@ -179,6 +179,55 @@ def test_default_intent_returns_real_estate_contract():
     assert monthly.metric_ids == ["deal_count", "deal_amount"]
 
 
+def test_router_rejects_monthly_derived_rate_metrics():
+    router = ControlledIntentRouter()
+
+    deal = router.route("最近几个月成交转化率趋势如何？")
+    assert deal.workflow == "unsupported"
+    assert deal.derived_rate_metric == "deal_rate"
+
+    visit = router.route("最近几个月到访率趋势如何？")
+    assert visit.workflow == "unsupported"
+    assert visit.derived_rate_metric == "visit_rate"
+
+    subscribe = router.route("最近几个月认购转化率趋势如何？")
+    assert subscribe.workflow == "unsupported"
+    assert subscribe.derived_rate_metric == "subscription_rate"
+
+
+def test_router_keeps_legal_monthly_metrics_supported():
+    router = ControlledIntentRouter()
+
+    assert (
+        router.route("最近几个月成交金额趋势如何？").workflow
+        == "monthly_trend"
+    )
+    assert (
+        router.route("最近几个月成交套数趋势如何？").workflow
+        == "monthly_trend"
+    )
+    assert router.route("最近几个月情况怎么样？").workflow == "monthly_trend"
+
+
+def test_router_group_context_keeps_deal_rate_supported():
+    router = ControlledIntentRouter()
+
+    assert (
+        router.route("各渠道的成交转化率怎么样？").workflow
+        == "group_comparison"
+    )
+
+
+def test_router_produces_monthly_derived_rate_refusal_message():
+    router = ControlledIntentRouter()
+
+    message = router.monthly_derived_rate_refusal("deal_rate")
+    assert "成交转化率" in message
+    assert "成交套数" in message
+    assert "成交金额" in message
+    assert "回款金额" in message
+
+
 def test_controlled_fallback_completes_both_fixed_workflows(v2_runtime):
     _prepare_dataset(v2_runtime)
     service = AnalysisRunService()
@@ -284,39 +333,35 @@ def test_fake_provider_executes_template_recommendations_as_compiled_workflows(
     }
 
     service = AnalysisRunService()
-    runs = {}
+    runs = []
     for item in generated.recommendations:
         run = service.create_run(
             "conversation-1",
             "file-1",
             item["question"],
-            f"fake-template-{item['intent_type']}",
+            f"fake-template-{item['id']}",
         )
         AnalysisExecutor(provider).execute(run.id)
-        runs[item["intent_type"]] = run
+        runs.append(run)
 
     session = database.SessionLocal()
-    stored = {
-        intent_type: session.get(AnalysisRunModel, run.id)
-        for intent_type, run in runs.items()
-    }
-    assert {item.status for item in stored.values()} == {"completed"}
+    stored = [session.get(AnalysisRunModel, run.id) for run in runs]
+    assert {item.status for item in stored} == {"completed"}, [
+        item.failure_json for item in stored
+    ]
     assert {
-        item.context_snapshot_json["intent_mode"]
-        for item in stored.values()
+        item.context_snapshot_json["intent_mode"] for item in stored
     } == {"controlled_fallback"}
-    operations = {
-        intent_type: [
-            step.operation
-            for step in session.query(RunStepModel)
-            .filter_by(run_id=run.id)
-            .order_by(RunStepModel.sequence)
-            .all()
-        ]
-        for intent_type, run in runs.items()
-    }
-    assert "group_aggregate" in operations["group_comparison"]
-    assert "monthly_trend" in operations["monthly_trend"]
+    operations = [
+        step.operation
+        for run in runs
+        for step in session.query(RunStepModel)
+        .filter_by(run_id=run.id)
+        .order_by(RunStepModel.sequence)
+        .all()
+    ]
+    assert "group_aggregate" in operations
+    assert "monthly_trend" in operations
     session.close()
 
 
@@ -404,6 +449,45 @@ def test_fake_provider_marks_unsupported_questions_for_safe_plan_fallback(
         )
 
     assert raised.value.code == "FAKE_SAFE_PLAN_FALLBACK"
+    session.close()
+
+
+def test_fake_provider_refuses_monthly_derived_rate(v2_runtime):
+    session = database.SessionLocal()
+    file_record = session.get(FileModel, "file-1")
+
+    with pytest.raises(ProviderError) as raised:
+        FakeAnalysisProvider().generate_intent(
+            "最近几个月成交转化率趋势如何？",
+            file_record,
+        )
+
+    assert raised.value.code == "UNSUPPORTED_MONTHLY_METRIC"
+    assert "成交转化率" in raised.value.user_message
+    session.close()
+
+
+def test_executor_refuses_monthly_derived_rate_with_user_visible_message(
+    v2_runtime,
+):
+    _prepare_dataset(v2_runtime)
+    run = AnalysisRunService().create_run(
+        "conversation-1",
+        "file-1",
+        "最近几个月成交转化率趋势如何？",
+        "derived-rate-refusal",
+    )
+
+    AnalysisExecutor(InvalidIntentProvider()).execute(run.id)
+
+    session = database.SessionLocal()
+    failed = session.get(AnalysisRunModel, run.id)
+    assert failed.status == "failed"
+    assert failed.failure_json["code"] == "UNSUPPORTED_MONTHLY_METRIC"
+    assert "成交转化率" in failed.failure_json["message"]
+    assert "成交套数" in failed.failure_json["message"]
+    assert failed.answer_message_id is None
+    assert session.query(RunStepModel).filter_by(run_id=run.id).count() == 0
     session.close()
 
 

@@ -302,16 +302,16 @@ class DatasetRecommendationService:
             return []
         candidates = getattr(generation, "candidates", [])
         accepted: list[dict[str, Any]] = []
-        accepted_intents: set[str] = set()
+        accepted_identities: set[tuple] = set()
         for candidate in candidates:
             validated = self._validated_candidate(candidate, file_record)
-            if (
-                validated is None
-                or validated.candidate.intent_type in accepted_intents
-            ):
+            if validated is None:
+                continue
+            identity = self._candidate_identity(validated.candidate)
+            if identity in accepted_identities:
                 continue
             accepted.append(self._public_candidate(validated, file_record, row))
-            accepted_intents.add(validated.candidate.intent_type)
+            accepted_identities.add(identity)
         return accepted
 
     def _canonical_cached_recommendations(
@@ -325,16 +325,16 @@ class DatasetRecommendationService:
             return None
 
         accepted: list[dict[str, Any]] = []
-        accepted_intents: set[str] = set()
+        accepted_identities: set[tuple] = set()
         for cached_item in row.recommendations_json:
             validated = self._validated_candidate(cached_item, file_record)
-            if (
-                validated is None
-                or validated.candidate.intent_type in accepted_intents
-            ):
+            if validated is None:
+                continue
+            identity = self._candidate_identity(validated.candidate)
+            if identity in accepted_identities:
                 continue
             accepted.append(self._public_candidate(validated, file_record, row))
-            accepted_intents.add(validated.candidate.intent_type)
+            accepted_identities.add(identity)
         return accepted or None
 
     def resolve_recommendation_intent(
@@ -399,14 +399,16 @@ class DatasetRecommendationService:
         row: DatasetRecommendationModel,
     ) -> list[dict[str, Any]]:
         accepted: list[dict[str, Any]] = []
+        accepted_identities: set[tuple] = set()
         for candidate in self._template_candidates(file_record):
             validated = self._validated_candidate(candidate, file_record)
-            if validated is None or any(
-                item["intent_type"] == validated.candidate.intent_type
-                for item in accepted
-            ):
+            if validated is None:
+                continue
+            identity = self._candidate_identity(validated.candidate)
+            if identity in accepted_identities:
                 continue
             accepted.append(self._public_candidate(validated, file_record, row))
+            accepted_identities.add(identity)
         return accepted
 
     def resolve_template_intent(
@@ -440,6 +442,11 @@ class DatasetRecommendationService:
                     candidate.get("referenced_fields")
                     if isinstance(candidate, dict)
                     else getattr(candidate, "referenced_fields", None)
+                ),
+                "detect_underperforming": (
+                    candidate.get("detect_underperforming", False)
+                    if isinstance(candidate, dict)
+                    else getattr(candidate, "detect_underperforming", False)
                 ),
             }
             parsed = RecommendationCandidate.model_validate(controlled)
@@ -513,16 +520,62 @@ class DatasetRecommendationService:
             if metric_semantics.get(field) in {"成交金额", "回款金额"}
         ]
         dates = [field for field in ordered_fields if is_date_hint(field)]
+
+        priority_dimensions = [
+            self.registry.dimensions["lead_channel"].source_field,
+            self.registry.dimensions["project_name"].source_field,
+            self.registry.dimensions["sales_consultant"].source_field,
+            self.registry.dimensions["property_type"].source_field,
+        ]
+        present_priority = [
+            field for field in priority_dimensions if field in dimensions
+        ]
+        group_dimensions = present_priority or dimensions[:1]
+
+        deal_amount_source = self.registry.metrics["deal_amount"].source_field
+        group_metric = (
+            deal_amount_source
+            if deal_amount_source in group_metrics
+            else (group_metrics[0] if group_metrics else None)
+        )
+
         candidates: list[RecommendationCandidate] = []
-        if dimensions:
-            dimension = dimensions[0]
-            referenced_fields = [dimension, *group_metrics[:1]]
+        for dimension in group_dimensions:
+            referenced_fields = (
+                [dimension, group_metric]
+                if group_metric is not None
+                else [dimension]
+            )
             candidates.append(
                 RecommendationCandidate(
                     intent_type="group_comparison",
                     referenced_fields=referenced_fields,
                 )
             )
+
+        contract_date_source = self.registry.dates[
+            "contract_date"
+        ].source_field
+        underperforming_dimension = (
+            present_priority[0]
+            if present_priority
+            else (dimensions[0] if dimensions else None)
+        )
+        if (
+            underperforming_dimension is not None
+            and contract_date_source in field_types
+        ):
+            candidates.append(
+                RecommendationCandidate(
+                    intent_type="group_comparison",
+                    referenced_fields=[
+                        underperforming_dimension,
+                        contract_date_source,
+                    ],
+                    detect_underperforming=True,
+                )
+            )
+
         if dimensions and dates:
             dimension = dimensions[0]
             date_field = dates[0]
@@ -570,7 +623,18 @@ class DatasetRecommendationService:
             "label": label,
             "question": question,
             "referenced_fields": list(candidate.referenced_fields),
+            "detect_underperforming": bool(
+                getattr(candidate, "detect_underperforming", False)
+            ),
         }
+
+    @staticmethod
+    def _candidate_identity(candidate: RecommendationCandidate) -> tuple:
+        return (
+            candidate.intent_type,
+            tuple(candidate.referenced_fields),
+            bool(getattr(candidate, "detect_underperforming", False)),
+        )
 
     @staticmethod
     def _recommendation_id(
@@ -587,6 +651,9 @@ class DatasetRecommendationService:
                 "provider_model": row.provider_model,
                 "intent_type": candidate.intent_type,
                 "referenced_fields": list(candidate.referenced_fields),
+                "detect_underperforming": bool(
+                    getattr(candidate, "detect_underperforming", False)
+                ),
             },
             ensure_ascii=False,
             sort_keys=True,
