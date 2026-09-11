@@ -119,6 +119,74 @@ describe('V2 API client', () => {
     )
   })
 
+  it('accepts six real estate recommendations without rejecting', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({
+      data: {
+        dataset_version_id: 'file-1',
+        source: 'template',
+        generated_at: '2026-08-06T10:00:00Z',
+        recommendations: [
+          {
+            id: 'group_comparison-lead-channel',
+            intent_type: 'group_comparison',
+            label: '按获客渠道比较',
+            question: '比较不同获客渠道的关键指标表现有何差异？',
+            referenced_fields: ['获客渠道', '成交金额'],
+          },
+          {
+            id: 'group_comparison-project',
+            intent_type: 'group_comparison',
+            label: '按项目比较',
+            question: '比较不同项目的关键指标表现有何差异？',
+            referenced_fields: ['项目', '成交金额'],
+          },
+          {
+            id: 'group_comparison-consultant',
+            intent_type: 'group_comparison',
+            label: '按置业顾问比较',
+            question: '比较不同置业顾问的关键指标表现有何差异？',
+            referenced_fields: ['置业顾问', '成交金额'],
+          },
+          {
+            id: 'group_comparison-property-type',
+            intent_type: 'group_comparison',
+            label: '按户型比较',
+            question: '比较不同户型的关键指标表现有何差异？',
+            referenced_fields: ['户型', '成交金额'],
+          },
+          {
+            id: 'group_comparison-underperforming',
+            intent_type: 'group_comparison',
+            label: '低转化获客渠道排查',
+            question: '识别线索量高但成交转化率偏低的获客渠道。',
+            referenced_fields: ['获客渠道', '签约日期'],
+            detect_underperforming: true,
+          },
+          {
+            id: 'monthly_trend-project',
+            intent_type: 'monthly_trend',
+            label: '项目月度趋势',
+            question: '按月份查看各项目的成交金额趋势。',
+            referenced_fields: ['项目', '线索日期', '成交金额'],
+          },
+        ],
+      },
+      meta: metaFixture,
+    }))
+
+    const result = await getDatasetRecommendations('file-1')
+
+    expect(result.recommendations).toHaveLength(6)
+    expect(result.recommendations.map((item) => item.label)).toEqual([
+      '按获客渠道比较',
+      '按项目比较',
+      '按置业顾问比较',
+      '按户型比较',
+      '低转化获客渠道排查',
+      '项目月度趋势',
+    ])
+  })
+
   it('queries run, steps, artifacts and one artifact', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce(jsonResponse({ data: runFixture, meta: metaFixture }))

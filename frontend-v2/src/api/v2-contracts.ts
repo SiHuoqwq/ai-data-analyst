@@ -121,7 +121,7 @@ const validRecommendation = (value: unknown): value is DatasetRecommendation =>
 export const parseDatasetRecommendations = (value: unknown): DatasetRecommendationResponse => {
   const data = unwrap(value)
   if (!string(data.dataset_version_id) || !Array.isArray(data.recommendations)
-    || data.recommendations.length > 2 || !data.recommendations.every(validRecommendation)
+    || !data.recommendations.every(validRecommendation)
     || (data.source !== 'model' && data.source !== 'template') || !string(data.generated_at)) {
     throw invalidResponseError()
   }

@@ -274,6 +274,26 @@ describe('AnalysisWorkbenchPage', () => {
     expect(screen.queryByRole('button', { name: '使用月度成交趋势推荐' })).not.toBeInTheDocument()
   })
 
+  it('renders six recommendations without the unavailable placeholder', () => {
+    recommendationsByDataset['file-1'].recommendations = [
+      { id: 'lead-channel', intent_type: 'group_comparison', label: '按获客渠道比较', question: '比较不同获客渠道的关键指标表现有何差异？', referenced_fields: ['获客渠道', '成交金额'] },
+      { id: 'project', intent_type: 'group_comparison', label: '按项目比较', question: '比较不同项目的关键指标表现有何差异？', referenced_fields: ['项目', '成交金额'] },
+      { id: 'consultant', intent_type: 'group_comparison', label: '按置业顾问比较', question: '比较不同置业顾问的关键指标表现有何差异？', referenced_fields: ['置业顾问', '成交金额'] },
+      { id: 'property-type', intent_type: 'group_comparison', label: '按户型比较', question: '比较不同户型的关键指标表现有何差异？', referenced_fields: ['户型', '成交金额'] },
+      { id: 'underperforming', intent_type: 'group_comparison', label: '低转化获客渠道排查', question: '识别线索量高但成交转化率偏低的获客渠道。', referenced_fields: ['获客渠道', '签约日期'] },
+      { id: 'monthly-trend', intent_type: 'monthly_trend', label: '项目月度趋势', question: '按月份查看各项目的成交金额趋势。', referenced_fields: ['项目', '线索日期', '成交金额'] },
+    ]
+
+    renderPage()
+
+    expect(screen.queryByText('推荐问题暂时不可用')).not.toBeInTheDocument()
+    expect(screen.getByText('推荐分析')).toBeInTheDocument()
+    for (const label of ['按获客渠道比较', '按项目比较', '按置业顾问比较', '按户型比较', '低转化获客渠道排查', '项目月度趋势']) {
+      expect(screen.getByText(label)).toBeInTheDocument()
+    }
+    expect(screen.getAllByRole('button', { name: /使用.+推荐/ })).toHaveLength(6)
+  })
+
   it('keeps manual input available when recommendations cannot be loaded', () => {
     recommendationsError = new Error('network unavailable')
 
