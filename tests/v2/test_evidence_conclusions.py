@@ -10,6 +10,7 @@ from app.v2.services.markdown_renderer import ConclusionMarkdownRenderer
 from app.v2.services.deterministic_renderer import (
     DeterministicGroundedAnswerRenderer,
 )
+from app.v2.services.provider import FakeAnalysisProvider
 
 
 def evidence_payload():
@@ -291,3 +292,73 @@ def test_compact_aliases_are_stable_and_bound_to_the_current_run():
     assert all("key" not in item for item in first.prompt_payload())
     assert all("source_artifact_id" not in item for item in first.prompt_payload())
     assert first.run_id == "run-current"
+
+
+def inspect_evidence_payload():
+    return [
+        {
+            "artifact_id": "inspect-artifact",
+            "artifact_type": "metric",
+            "source_tool": "inspect_dataset",
+            "title": "数据记录数",
+            "summary": {
+                "row_count": 520,
+                "column_count": 14,
+                "missing_counts": {"到访日期": 236, "认购日期": 300},
+            },
+            "preview": [],
+            "warnings": [],
+        }
+    ]
+
+
+def test_registry_humanizes_inspect_metadata_labels():
+    registry = EvidenceRegistry.from_tool_evidence(
+        "run-demo",
+        inspect_evidence_payload(),
+    )
+
+    labels = {item.label for item in registry.items}
+    assert "数据行数" in labels
+    assert "数据列数" in labels
+    assert "到访日期 空值数" in labels
+    assert not any(
+        raw in item.label
+        for item in registry.items
+        for raw in ("row_count", "column_count", "missing_counts")
+    )
+
+
+def test_fake_conclusion_uses_business_language_without_raw_keys():
+    registry = EvidenceRegistry.from_tool_evidence(
+        "run-demo",
+        inspect_evidence_payload(),
+    )
+    provider = FakeAnalysisProvider()
+    conclusion = provider.build_conclusion("分析销售数据", None, registry)
+
+    markdown = ConclusionMarkdownRenderer().render(
+        conclusion,
+        provider.last_conclusion_aliases,
+    )
+
+    assert "销售经营分析结论" in markdown
+    for raw in ("row_count", "column_count", "missing_counts"):
+        assert raw not in markdown
+    assert "测试分析模式" not in markdown
+    assert "确定性分析步骤生成" not in markdown
+
+
+def test_deterministic_renderer_hides_inspect_metadata_keys():
+    registry = EvidenceRegistry.from_tool_evidence(
+        "run-demo",
+        inspect_evidence_payload(),
+    )
+
+    markdown = DeterministicGroundedAnswerRenderer().render(
+        registry,
+        {"metric"},
+    )
+
+    for raw in ("row_count", "column_count", "missing_counts"):
+        assert raw not in markdown

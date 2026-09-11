@@ -313,23 +313,23 @@ class FakeAnalysisProvider:
         self.last_conclusion_aliases = aliases
         primary = [entry.alias for entry in aliases.entries]
         return StructuredConclusion(
-            headline="数据概览结论",
-            overview="本次结论由已完成的确定性分析步骤生成。",
+            headline="销售经营分析结论",
+            overview="已完成对销售数据集的基础核验，数据结构清晰，可用于后续经营分析。",
             findings=[
                 ConclusionFinding(
-                    title="关键数据已完成核验",
-                    statement="当前数据集的主要结构化结果已生成。",
+                    title="数据基础已核验",
+                    statement="数据集的行列结构与关键字段完整性已确认。",
                     evidence_refs=primary,
                 )
             ],
             recommendations=[
                 ConclusionRecommendation(
-                    action="结合结构化结果继续检查重点分组",
-                    reason="当前证据可作为后续分析的可靠起点",
+                    action="结合字段质量情况开展分组与趋势分析",
+                    reason="当前数据基础可作为后续经营分析的可靠起点",
                     evidence_refs=primary,
                 )
             ],
-            limitations=["测试分析模式不读取历史回答作为计算输入。"],
+            limitations=["部分字段存在空值，分析时需结合业务阶段判断。"],
         )
 
 

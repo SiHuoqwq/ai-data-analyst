@@ -52,8 +52,8 @@ def _public_provider_status() -> dict[str, str]:
     if mode == "fake":
         return {
             "mode": "fake",
-            "display_name": "Fake",
-            "description": "确定性演示/测试模式",
+            "display_name": "演示模式",
+            "description": "使用确定性计算，便于稳定演示",
         }
     if mode == "deepseek":
         return {

@@ -62,6 +62,12 @@ describe('DatasetOverviewPage', () => {
     expect(screen.queryByText(/Markdown|V1|V2|AnalysisRun|Artifact|服务端分页/)).not.toBeInTheDocument()
   })
 
+  it('用中性的空值总数替换缺失值 KPI 标题', () => {
+    renderPage()
+    expect(screen.getByText('空值总数')).toBeInTheDocument()
+    expect(screen.queryByText('缺失值')).not.toBeInTheDocument()
+  })
+
   it('默认展示前四个问题并支持原地展开和收起', () => {
     conversationState.data = [{
       id: 'conversation-1', file_id: 'file-1', title: '多轮销售分析', mode: 'agent',

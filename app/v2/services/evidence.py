@@ -203,7 +203,7 @@ class EvidenceRegistry:
                         run_id=run_id,
                         source_artifact_id=source_artifact_id,
                         source_tool=source_tool,
-                        label=path,
+                        label=cls._humanize_summary_label(path),
                         value=value,
                         display_value=display_value,
                         unit=unit,
@@ -345,6 +345,16 @@ class EvidenceRegistry:
         if unit == "number" and number is not None:
             return f"{number:,.2f}".rstrip("0").rstrip(".")
         return str(value)
+
+    @staticmethod
+    def _humanize_summary_label(path: str) -> str:
+        if path == "row_count":
+            return "数据行数"
+        if path == "column_count":
+            return "数据列数"
+        if path.startswith("missing_counts."):
+            return f"{path.split('.', 1)[1]} 空值数"
+        return path
 
     @classmethod
     def _numeric_summary_values(

@@ -70,7 +70,7 @@ export function DatasetOverviewPage() {
       {([
         ['总行数', data.row_count, Rows3, '文件中的记录数量'],
         ['总列数', data.col_count, Columns3, '可用于分析的字段'],
-        ['缺失值', metrics.missingValues, CircleDashed, '所有字段缺失值合计'],
+        ['空值总数', metrics.missingValues, CircleDashed, '包含尚未进入后续销售阶段的空值'],
         ['含缺失字段', metrics.fieldsWithMissing, ScanSearch, '需要关注的字段'],
       ] satisfies MetricDefinition[]).map(([label, value, Icon, note]) =>
         <Card className="metric-card" key={label}><div className="metric-label"><Icon size={17} /><span>{label}</span></div><strong>{formatNumber(value)}</strong><small>{note}</small></Card>)}

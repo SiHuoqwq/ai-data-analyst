@@ -24,8 +24,8 @@ def test_health_exposes_only_public_fake_provider_status(monkeypatch):
     assert response.status_code == 200
     assert response.json()["provider"] == {
         "mode": "fake",
-        "display_name": "Fake",
-        "description": "确定性演示/测试模式",
+        "display_name": "演示模式",
+        "description": "使用确定性计算，便于稳定演示",
     }
     serialized = response.text.lower()
     assert "api_key" not in serialized
