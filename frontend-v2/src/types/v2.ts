@@ -111,6 +111,7 @@ export interface TableColumn {
   key: string
   label: string
   data_type: 'string' | 'number' | 'boolean' | 'datetime' | 'null'
+  unit?: string
 }
 
 export interface TableArtifactPayload {

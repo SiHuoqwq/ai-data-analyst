@@ -362,3 +362,113 @@ def test_deterministic_renderer_hides_inspect_metadata_keys():
 
     for raw in ("row_count", "column_count", "missing_counts"):
         assert raw not in markdown
+
+
+def underperforming_evidence_payload():
+    return [
+        {
+            "artifact_id": "inspect-artifact",
+            "artifact_type": "metric",
+            "source_tool": "inspect_dataset",
+            "title": "数据记录数",
+            "summary": {
+                "row_count": 520,
+                "column_count": 14,
+                "missing_counts": {"到访日期": 236},
+            },
+            "preview": [],
+            "warnings": [],
+        },
+        {
+            "artifact_id": "underperforming-table",
+            "artifact_type": "table",
+            "source_tool": "identify_underperforming",
+            "title": "高线索量低成交转化率组合",
+            "summary": {"matched_groups": 1},
+            "preview": [
+                {
+                    "lead_channel": "短视频平台",
+                    "lead_count": 150,
+                    "deal_count": 8,
+                    "deal_rate": 0.0533,
+                }
+            ],
+            "warnings": [],
+        },
+    ]
+
+
+def group_comparison_evidence_payload():
+    return [
+        {
+            "artifact_id": "inspect-artifact",
+            "artifact_type": "metric",
+            "source_tool": "inspect_dataset",
+            "title": "数据记录数",
+            "summary": {"row_count": 520, "column_count": 14},
+            "preview": [],
+            "warnings": [],
+        },
+        {
+            "artifact_id": "group-table",
+            "artifact_type": "table",
+            "source_tool": "group_aggregate",
+            "title": "分组统计结果",
+            "summary": {"scanned_rows": 321},
+            "preview": [
+                {"lead_channel": "线上投放", "lead_count": 153, "deal_count": 32},
+                {"lead_channel": "渠道分销", "lead_count": 120, "deal_count": 18},
+            ],
+            "warnings": [],
+        },
+    ]
+
+
+def test_fake_conclusion_prioritizes_underperforming_over_inspection():
+    registry = EvidenceRegistry.from_tool_evidence(
+        "run-demo",
+        underperforming_evidence_payload(),
+    )
+    provider = FakeAnalysisProvider()
+    conclusion = provider.build_conclusion(
+        "哪些获客渠道线索多但成交转化率偏低？",
+        None,
+        registry,
+    )
+
+    markdown = ConclusionMarkdownRenderer().render(
+        conclusion,
+        provider.last_conclusion_aliases,
+    )
+
+    assert "高线索低成交转化渠道识别" in markdown
+    assert "短视频平台" in markdown
+    assert "150" in markdown
+    assert "8" in markdown
+    assert "5.33%" in markdown
+    assert "数据行数" not in markdown
+    assert "数据列数" not in markdown
+
+
+def test_fake_conclusion_prioritizes_group_comparison_over_inspection():
+    registry = EvidenceRegistry.from_tool_evidence(
+        "run-demo",
+        group_comparison_evidence_payload(),
+    )
+    provider = FakeAnalysisProvider()
+    conclusion = provider.build_conclusion(
+        "各获客渠道的线索和成交情况如何？",
+        None,
+        registry,
+    )
+
+    markdown = ConclusionMarkdownRenderer().render(
+        conclusion,
+        provider.last_conclusion_aliases,
+    )
+
+    assert "获客渠道对比结论" in markdown
+    assert "线上投放" in markdown
+    assert "153" in markdown
+    assert "数据行数" not in markdown
+    assert "数据列数" not in markdown

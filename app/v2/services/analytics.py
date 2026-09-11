@@ -153,6 +153,7 @@ def _table_payload(
     output_schema: ResultSchema | None = None,
 ) -> dict[str, Any]:
     labels = {}
+    units = {}
     if output_schema is not None:
         labels = {
             item.id: item.label
@@ -161,6 +162,7 @@ def _table_payload(
                 *output_schema.metrics,
             ]
         }
+        units = {item.id: item.unit for item in output_schema.metrics}
     columns = []
     for column in df.columns:
         series = df[column]
@@ -172,13 +174,14 @@ def _table_payload(
             data_type = "datetime"
         else:
             data_type = "string"
-        columns.append(
-            {
-                "key": str(column),
-                "label": labels.get(str(column), str(column)),
-                "data_type": data_type,
-            }
-        )
+        column_payload = {
+            "key": str(column),
+            "label": labels.get(str(column), str(column)),
+            "data_type": data_type,
+        }
+        if str(column) in units:
+            column_payload["unit"] = units[str(column)]
+        columns.append(column_payload)
     return {"columns": columns, "rows": _json_rows(df)}
 
 

@@ -8,9 +8,9 @@ export const formatDate = (value: string) => {
   const date = new Date(value)
   return Number.isNaN(date.getTime()) ? '时间未知' : dateFormatter.format(date)
 }
-export const formatCell = (value: unknown) => {
+export const formatCell = (value: unknown, unit?: string) => {
   if (value === '' || value === null || value === undefined) return '—'
-  if (typeof value === 'number') return formatNumber(value)
+  if (typeof value === 'number') return unit === 'percentage' ? formatPercent(value) : formatNumber(value)
   if (typeof value === 'boolean') return value ? '是' : '否'
   return String(value)
 }

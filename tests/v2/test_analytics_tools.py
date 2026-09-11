@@ -738,3 +738,45 @@ def test_chart_alt_text_is_bounded_for_many_multidimensional_groups(
     ) == first_full_label
     assert all(len(item.alt_text) <= 500 for item in result.drafts)
     assert all(first_full_label in item.alt_text for item in result.drafts)
+
+
+def test_table_payload_attaches_metric_units_to_metric_columns():
+    from app.v2.services.analytics import _table_payload
+
+    schema = ResultSchema(
+        dimensions=[
+            ResultDimension(
+                id="channel",
+                label="获客渠道",
+                role="category",
+                data_type="string",
+                source_field="lead_channel",
+            )
+        ],
+        metrics=[
+            ResultMetric(
+                id="lead_count",
+                label="线索数",
+                unit="count",
+                aggregation="count",
+                nullable=False,
+            ),
+            ResultMetric(
+                id="deal_rate",
+                label="成交转化率",
+                unit="percentage",
+                aggregation="ratio",
+                nullable=False,
+            ),
+        ],
+        grain=["channel"],
+    )
+    frame = pd.DataFrame(
+        [{"channel": "短视频平台", "lead_count": 150, "deal_rate": 0.0533}]
+    )
+    payload = _table_payload(frame, schema)
+
+    by_key = {column["key"]: column for column in payload["columns"]}
+    assert by_key["lead_count"]["unit"] == "count"
+    assert by_key["deal_rate"]["unit"] == "percentage"
+    assert "unit" not in by_key["channel"]

@@ -84,6 +84,19 @@ describe('ArtifactView', () => {
     expect(screen.getByRole('table', { name: '分析结果' })).toBeInTheDocument()
   })
 
+  it('formats percentage columns using their unit instead of a bare ratio', () => {
+    render(<ArtifactView artifact={artifact('table', {
+      columns: [
+        { key: 'channel', label: '获客渠道', data_type: 'string' },
+        { key: 'deal_rate', label: '成交转化率', data_type: 'number', unit: 'percentage' },
+      ],
+      rows: [{ channel: '短视频平台', deal_rate: 0.0533 }],
+    })} />)
+
+    expect(screen.getAllByText('5.33%').length).toBeGreaterThan(0)
+    expect(screen.queryByText('0.053')).not.toBeInTheDocument()
+  })
+
   it('renders a chart with accessible enlargement and failure recovery', () => {
     render(<ArtifactView artifact={artifact('chart', {
       renderer: 'static-image',

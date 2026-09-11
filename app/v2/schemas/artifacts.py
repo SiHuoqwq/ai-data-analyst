@@ -29,6 +29,7 @@ class TableColumn(StrictModel):
     key: str = Field(min_length=1, max_length=256)
     label: str = Field(min_length=1, max_length=256)
     data_type: Literal["string", "number", "boolean", "datetime", "null"]
+    unit: Literal["count", "currency", "percentage", "score", "number"] | None = None
 
 
 class TableArtifactPayload(StrictModel):

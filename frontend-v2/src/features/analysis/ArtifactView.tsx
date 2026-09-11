@@ -96,7 +96,7 @@ export function TableArtifactView({ artifact }: { artifact: AnalysisArtifact }) 
       {metricColumns.length > 0 && <dl className="single-object-metrics">
         {metricColumns.map((column) => <div key={column.key}>
           <dt>{column.label}</dt>
-          <dd>{formatCell(singleRow[column.key])}</dd>
+          <dd>{formatCell(singleRow[column.key], column.unit)}</dd>
         </div>)}
       </dl>}
       <p>当前结果仅包含 1 个对象，无法进行组间比较。</p>
@@ -111,9 +111,9 @@ export function TableArtifactView({ artifact }: { artifact: AnalysisArtifact }) 
             <td
               className={column.data_type === 'number' ? 'numeric-cell' : ''}
               key={`${rowIndex}-${column.key}`}
-              title={formatCell(row[column.key])}
+              title={formatCell(row[column.key], column.unit)}
             >
-              {formatCell(row[column.key])}
+              {formatCell(row[column.key], column.unit)}
             </td>)}</tr>)}</tbody>
       </table>
     </div>

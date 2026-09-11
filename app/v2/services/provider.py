@@ -296,6 +296,17 @@ class FakeAnalysisProvider:
             f"结论与展示内容来自结构化产物：{references}。"
         )
 
+    @staticmethod
+    def _business_items(
+        registry: EvidenceRegistry,
+        source_tool: str,
+    ) -> list:
+        return [
+            item
+            for item in registry.items
+            if item.source_tool == source_tool and ".summary." not in item.key
+        ]
+
     def build_conclusion(
         self,
         question: str,
@@ -307,29 +318,70 @@ class FakeAnalysisProvider:
                 "UNGROUNDED_ANSWER",
                 "本次分析没有可用于生成结论的结构化证据",
             )
-        aliases = registry.create_alias_map(
-            registry.items[: min(3, len(registry.items))]
+        underperforming = self._business_items(
+            registry, "identify_underperforming"
         )
+        comparison = self._business_items(registry, "group_aggregate")
+        trend = self._business_items(registry, "monthly_trend")
+
+        if underperforming:
+            selected = underperforming[:20]
+            headline = "高线索低成交转化渠道识别"
+            overview = "已识别出线索量较高但成交转化偏低的获客渠道，需要重点关注。"
+            finding_title = "低转化渠道已识别"
+            finding_statement = "部分获客渠道线索规模较大，但成交转化率明显偏低。"
+            action = "对低转化渠道开展到访与认购环节专项排查"
+            reason = "这些渠道线索量充足但转化不足，存在运营优化空间"
+            limitations = ["低转化判定基于当前样本的分位阈值，需结合业务阶段综合判断。"]
+        elif comparison:
+            selected = comparison[:20]
+            headline = "获客渠道对比结论"
+            overview = "已对比各获客渠道的线索与成交表现，为渠道投入提供参考。"
+            finding_title = "渠道表现存在差异"
+            finding_statement = "不同获客渠道的线索规模与成交情况存在明显差异。"
+            action = "结合渠道表现优化获客投入分配"
+            reason = "各渠道线索与成交效率差异明显，需差异化运营"
+            limitations = ["渠道对比未排除样本量差异带来的影响。"]
+        elif trend:
+            selected = trend[:20]
+            headline = "月度趋势分析结论"
+            overview = "已完成按月份的趋势统计，识别关键变化信号。"
+            finding_title = "趋势变化已识别"
+            finding_statement = "关键指标在观察期内呈现阶段性变化。"
+            action = "结合趋势信号定位关键变化节点"
+            reason = "趋势波动与变化信号需要进一步归因"
+            limitations = ["趋势分析基于当前时间窗口，需结合更长时间序列判断。"]
+        else:
+            selected = registry.items[: min(3, len(registry.items))]
+            headline = "销售经营分析结论"
+            overview = "已完成对销售数据集的基础核验，数据结构清晰，可用于后续经营分析。"
+            finding_title = "数据基础已核验"
+            finding_statement = "数据集的行列结构与关键字段完整性已确认。"
+            action = "结合字段质量情况开展分组与趋势分析"
+            reason = "当前数据基础可作为后续经营分析的可靠起点"
+            limitations = ["部分字段存在空值，分析时需结合业务阶段判断。"]
+
+        aliases = registry.create_alias_map(selected)
         self.last_conclusion_aliases = aliases
         primary = [entry.alias for entry in aliases.entries]
         return StructuredConclusion(
-            headline="销售经营分析结论",
-            overview="已完成对销售数据集的基础核验，数据结构清晰，可用于后续经营分析。",
+            headline=headline,
+            overview=overview,
             findings=[
                 ConclusionFinding(
-                    title="数据基础已核验",
-                    statement="数据集的行列结构与关键字段完整性已确认。",
+                    title=finding_title,
+                    statement=finding_statement,
                     evidence_refs=primary,
                 )
             ],
             recommendations=[
                 ConclusionRecommendation(
-                    action="结合字段质量情况开展分组与趋势分析",
-                    reason="当前数据基础可作为后续经营分析的可靠起点",
-                    evidence_refs=primary,
+                    action=action,
+                    reason=reason,
+                    evidence_refs=primary[:1],
                 )
             ],
-            limitations=["部分字段存在空值，分析时需结合业务阶段判断。"],
+            limitations=limitations,
         )
 
 
