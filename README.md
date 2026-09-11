@@ -1,90 +1,167 @@
-# 析数：AI 数据分析工作台
+# 析数｜房地产销售经营分析工作台
 
-一个面向在线学习运营数据的个人作品集项目。用户可以上传 CSV/XLSX，
-查看字段质量和数据预览，并通过自然语言发起受控分析。模型只负责识别
-高层分析意图；字段映射、聚合规则、图表规划和业务数字均由服务端的
-确定性流程完成。
+**AI Data Analyst for Real Estate Sales Operations**
 
-当前 `v2.0.0` 同时保留 `/api/v1` 兼容能力，并提供完整的 `/api/v2`
-分析闭环、SSE 事件、结构化 Artifact、会话持久化和刷新恢复。
+上传 CSV / Excel 销售数据，通过自然语言完成渠道、项目、置业顾问、销售漏斗、成交趋势等分析，并生成指标、表格、图表和可追溯的分析结论。
 
-## 项目亮点
+## 项目简介
 
-- **结果驱动工作台**：以数据集概览、指标、表格和图表为主画布，不使用
-  固定三栏聊天布局。
-- **受控领域工作流**：支持多维分组对比和月度趋势两类在线学习运营分析。
-- **确定性计算**：pandas 负责全部统计数字，模型不能生成 Python、SQL、
-  工具步骤或图表参数。
-- **可验证结论**：Evidence Registry 校验结论引用；模型结论不合法时，
-  可以基于已验证证据安全降级。
-- **可恢复运行**：AnalysisRun、RunStep、Artifact 和事件持久化；SSE
-  提供实时更新，REST 是最终事实来源。
-- **安全默认值**：默认 `V2_PROVIDER=fake`，无需密钥和外部网络即可验证
-  完整产品链路。
+「析数」是一个面向房地产销售经营数据的个人作品集项目。用户上传 CSV / XLSX 数据后，可以查看字段质量与数据预览，并通过自然语言发起受控分析。
 
-## 支持范围
+核心思路是把「自然语言理解」和「确定性数据计算」分离：模型只负责识别高层分析意图（分析什么、按什么维度、看什么指标），而字段映射、聚合规则、图表规划、业务数字都由服务端的确定性流程完成，避免模型直接生成错误计算。
 
-| 能力 | 当前状态 |
+分析过程通过 Agent 化的结构化流水线执行，用 SSE 实时推送状态，最终沉淀为可追溯的 Metric / Table / Chart Artifact 和历史记录，刷新后可恢复。
+
+## 核心能力
+
+- 数据上传与质量概览：CSV / XLSX 上传、字段类型、缺失值、唯一值、数据预览
+- 房地产销售经营语义理解：渠道、项目、置业顾问、户型、客户等级等维度意图识别
+- 渠道 / 项目 / 置业顾问 / 户型分析：多维分组对比
+- 销售漏斗分析：线索 → 到访 → 认购 → 签约 → 回款
+- 成交金额与趋势分析：按自然月的分类趋势
+- 高线索低成交转化识别：自动定位线索量大但转化率偏低的组合
+- 推荐分析问题：基于数据字段生成可点选的推荐问题
+- Metric / Table / Chart Artifact：结构化结果展示
+- SSE 流式执行状态：实时进度与事件推送
+- 历史分析恢复：Conversation / Run / Step / Artifact 持久化，刷新可恢复
+
+## 房地产业务模型
+
+### 销售漏斗
+
+```text
+线索 → 到访 → 认购 → 签约 → 回款
+```
+
+### 核心指标
+
+| 类型 | 指标 |
 |---|---|
-| CSV、XLSX 上传与数据画像 | 已实现 |
-| 数据预览、字段与缺失信息 | 已实现 |
-| Conversation / Message 多轮历史 | 已实现 |
-| AnalysisRun 生命周期与合作式取消 | 已实现 |
-| text / metric / table / chart Artifact | 已实现 |
-| SSE 实时事件与 REST 恢复 | 已实现 |
-| 多维分组对比 | 已实现 |
-| 按自然月的分类趋势分析 | 已实现 |
-| 任意行业、任意 Python/SQL 分析 | 不支持 |
-| Token 级逐字输出 | 不支持 |
-| 交互式图表编辑、报告导出、多用户权限 | 不支持 |
+| 计数 | 线索数、到访数、认购数、成交套数 |
+| 金额 | 成交金额、回款金额 |
+| 转化率 | 到访率、认购转化率、成交转化率 |
+| 派生 | 平均成交金额 |
+
+### 核心维度
+
+项目、城市、区域、置业顾问、获客渠道、户型、客户等级。
+
+## Demo 数据集
+
+`demo/real_estate_sales_demo.csv` 是一份完全合成的演示数据，不包含任何真实房地产公司、楼盘、客户或个人信息。置业顾问使用匿名编号（顾问 01 ～ 12）。
+
+- 520 条销售线索
+- 14 个字段
+- 18 个月（2025-01 ～ 2026-06）
+- 4 个模拟项目
+- 6 个获客渠道
+- 12 名匿名置业顾问
+
+经过实际计算验证的部分 Demo 结果（均为合成数据的分析结果，非真实经营数据）：
+
+| 观察 | 结果 |
+|---|---|
+| 短视频平台 | 约 150 条线索，成交 8 套，成交转化率约 5.33% |
+| 老带新 | 成交转化率约 40% |
+| 滨江悦府 | Demo 中成交金额最高，合计 93,743,000 |
+
+数据由 `demo/generate_real_estate_sales_demo.py` 使用固定随机种子生成，可重复重建。详见 [demo/README_REAL_ESTATE.md](demo/README_REAL_ESTATE.md)。
+
+## 架构
+
+```mermaid
+flowchart TB
+    UI["Frontend V2 · React + TypeScript"]
+    API["FastAPI · REST / SSE"]
+    PROVIDER["Provider · Fake / DeepSeek"]
+    INTENT["Intent Router · 领域意图"]
+    PLAN["Plan Compiler · 固定工作流"]
+    TOOLS["Structured Analysis Tools · pandas / matplotlib"]
+    EVIDENCE["Evidence Registry · 结论校验"]
+    ARTIFACT["Artifact · text / metric / table / chart"]
+    RESULT["Metric / Table / Chart / Conclusion"]
+
+    UI --> API
+    API --> PROVIDER
+    PROVIDER --> INTENT
+    INTENT --> PLAN
+    PLAN --> TOOLS
+    TOOLS --> EVIDENCE
+    EVIDENCE --> ARTIFACT
+    ARTIFACT --> RESULT
+    RESULT --> UI
+```
+
+## 受控分析流水线
+
+这个项目不是简单的「LLM → pandas 代码」。一条分析问题会经过一条受控流水线：
+
+```text
+用户问题 → Intent → Plan → Tool execution → Evidence → Artifact → 确定性结论
+```
+
+- 模型只输出受限的领域意图（维度 + 指标 ID），不直接生成计算代码；
+- Plan Compiler 把意图编译成固定的工具步骤，并做执行前校验；
+- pandas 负责全部统计数字，matplotlib 负责图表；
+- Evidence Registry 校验结论引用的每个业务数字，非法时安全降级。
+
+为什么采用受控分析流水线：
+
+- 降低模型直接生成错误计算的风险；
+- 指标语义集中管理（领域注册表统一定义维度、指标和单位）；
+- 结果可验证（每个数字都能追溯到具体工具输出）；
+- Tool 输出可追踪（RunStep / Artifact 持久化）；
+- 前端展示契约稳定（只渲染 text / metric / table / chart 四类 Artifact）。
 
 ## 技术栈
 
-- 后端：Python 3.10、FastAPI 0.115、SQLAlchemy 2、Alembic、Pydantic
-- 分析：pandas、NumPy、matplotlib、seaborn
-- 模型：DeepSeek（可选）；Fake Provider（默认）
-- 前端：React 19、TypeScript 5.9、Vite 7、TanStack Query、Tailwind CSS 4
-- 测试：pytest、Vitest、React Testing Library、jsdom
-- 存储：SQLite 与本地文件系统
+- **后端**：Python 3.10、FastAPI、SQLAlchemy 2、Alembic、Pydantic、SSE
+- **分析计算**：pandas、NumPy
+- **图表**：matplotlib、seaborn
+- **模型**：DeepSeek（可选）、Fake deterministic provider（默认）
+- **V1 兼容层**：LangChain、LangGraph
+- **前端**：React 19、TypeScript 5.9、Vite 7、TanStack Query、Tailwind CSS 4
+- **测试**：pytest、Vitest、React Testing Library、jsdom
+- **存储**：SQLite、本地文件系统
 
-## 核心链路
+## Provider 说明
 
-```mermaid
-flowchart LR
-    A["上传 CSV / XLSX"] --> B["数据集概览"]
-    B --> C["提交分析问题"]
-    C --> D["识别高层 AnalysisIntent"]
-    D --> E["PlanCompiler 编译固定工作流"]
-    E --> F["PlanValidator 执行前校验"]
-    F --> G["pandas 确定性计算"]
-    G --> H["ChartPlanner 生成图表规格"]
-    H --> I["Artifact 与 Evidence 持久化"]
-    I --> J["结构化结论或确定性降级"]
-    J --> K["SSE 更新与 REST 恢复"]
-```
+- **Fake deterministic provider（默认）**：无需 API Key 和外部网络，输出确定性结果，用于稳定演示、自动化测试和确定性验收。
+- **DeepSeek Provider**：项目保留接入；配置 API Key 后可用于真实自然语言意图识别与结构化结论生成。
 
-完整架构见 [docs/release/ARCHITECTURE.md](docs/release/ARCHITECTURE.md)。
+> 说明：Demo 与自动化测试默认使用确定性 Provider，以保证结果稳定可复现。项目保留 DeepSeek Provider 接入，但真实 DeepSeek 端到端验收尚未在具备有效 API Key 的环境下完成最终 Smoke Test。
+
+## 演示问题
+
+以下问题适合用于演示：
+
+1. 哪些获客渠道线索很多，但成交转化率偏低？
+2. 哪个项目成交金额最高？
+3. 最近几个月成交金额趋势如何？
+4. 各置业顾问成交套数排名如何？
+5. 不同客户等级的成交转化表现如何？
+
+## 项目截图
+
+<!-- TODO: 补充房地产销售经营分析 Demo 的最终界面截图，使用仓库内相对路径。 -->
 
 ## 快速开始
 
 ### 环境要求
 
 - Python 3.10+
-- Node.js 20+（推荐 Node.js 22）
+- Node.js 20+（推荐 22）
 - npm 10+
 
-### 1. 安装
+### 1. 安装依赖
 
-```powershell
-git clone https://github.com/SiHuoqwq/ai-data-analyst.git
-cd ai-data-analyst
-
+```bash
 python -m pip install -r requirements.txt
-Copy-Item .env.example .env
+cp .env.example .env
 
-Set-Location frontend-v2
+cd frontend-v2
 npm ci
-Set-Location ..
+cd ..
 ```
 
 `.env.example` 默认使用 Fake Provider：
@@ -92,171 +169,130 @@ Set-Location ..
 ```dotenv
 V2_PROVIDER=fake
 DATABASE_URL=sqlite:///./app.db
+UPLOAD_DIR=./storage/uploads
+CHART_DIR=./storage/charts
 BACKEND_HOST=127.0.0.1
 BACKEND_PORT=8000
 FRONTEND_ORIGIN=http://localhost:5174
 ```
 
-不要把真实 API Key 提交到 Git。
+不要将真实 API Key 提交到 Git。
 
 ### 2. 启动后端
 
-Windows 可以运行：
-
-```powershell
-.\start.bat
-```
-
-脚本会明确执行数据库迁移。迁移失败时返回非零退出码并停止，不会继续启动
-后端。FastAPI 自身不会自动执行 Alembic。
-
-手动启动时：
-
-```powershell
+```bash
 python -m app.migrate
 python -m app.run
 ```
 
-后端地址：`http://127.0.0.1:8000`。
+后端地址：`http://127.0.0.1:8000`。FastAPI 启动只检查 Alembic revision，不自动执行迁移。
 
-### 3. 启动 Frontend V2
+### 3. 启动前端
 
 另开一个终端：
 
-```powershell
-Set-Location frontend-v2
+```bash
+cd frontend-v2
 npm run dev
 ```
 
 打开 `http://localhost:5174`。
 
-### Windows 演示启动
+### 4. 上传 Demo 数据
 
-已安装依赖后，可以在一个 PowerShell 窗口完成迁移并启动正式前后端：
+在界面中上传 `demo/real_estate_sales_demo.csv`，即可开始分析。
+
+### Windows 一键演示
+
+Windows 下可以在一个 PowerShell 窗口同时启动前后端：
 
 ```powershell
 .\start-demo.ps1
 ```
 
-脚本默认强制使用 Fake Provider，运行数据写入仓库外的
-`$env:TEMP\xishu-demo-runtime`。页面顶部会根据后端 `/health` 显示当前
-Provider。演示结束后运行：
+脚本默认使用 Fake Provider，将运行数据写入仓库外的临时目录。只有显式传入 `-Provider DeepSeek` 且环境中存在有效 `DEEPSEEK_API_KEY` 时才会使用真实模型。结束后运行：
 
 ```powershell
 .\stop-demo.ps1
 ```
 
-只有显式执行 `.\start-demo.ps1 -Provider DeepSeek` 才会选择真实模型；
-脚本要求 `DEEPSEEK_API_KEY` 已存在于当前环境，但不会打印密钥。
-
-## 数据库迁移安全
-
-- FastAPI 启动只检查 Alembic revision，不自动迁移。
-- 缺少 V2 revision 时，`/health` 和 `/api/v2` 返回
-  `503 DATABASE_MIGRATION_REQUIRED`。
-- `alembic downgrade base` 只能用于新建、可丢弃的临时数据库。
-- 真实 `app.db` 在发布验证中只做时间戳和 SHA-256 检查。
-- 迁移兼容性验证应对仓库外副本执行 `upgrade head`、重复升级、
-  行数检查和 `PRAGMA foreign_key_check`。
-
-详细步骤见 [docs/release/DEPLOYMENT.md](docs/release/DEPLOYMENT.md)。
-
-## 运行测试
+## 测试
 
 后端：
 
-```powershell
-$env:PYTHONDONTWRITEBYTECODE = "1"
+```bash
 python -m pytest -q
-python -m compileall -q app tests alembic
 ```
 
 前端：
 
-```powershell
-Set-Location frontend-v2
+```bash
+cd frontend-v2
 npm run typecheck
 npm run lint
 npm test
 npm run build
 ```
 
-自动测试使用临时数据库、匿名数据和 Fake/Mock Provider，不调用真实
-DeepSeek。
+自动测试使用临时数据库、匿名数据和 Fake/Mock Provider，不发起真实模型请求。
 
-## 演示
+房地产版本收口时的验收基线：后端 350 tests passed，前端 82 tests passed（16 个测试文件）。这是本次 release checkpoint 的状态，测试数量会随后续修改变化。
 
-仓库提供一份允许公开的完全合成课程运营数据：
-
-```powershell
-python demo/generate_learning_operations_demo.py
-```
-
-生成结果为 `demo/learning_operations_demo.csv`。它固定为 360 行、9 列、
-覆盖 18 个月，不包含任何真实个人或机构数据。字段和预设趋势见
-[demo/README.md](demo/README.md)。
-
-无密钥演示使用 Fake Provider，可验证上传、会话、Run、SSE、Artifact、
-取消和刷新恢复。Fake Provider 不解释任意业务问题，它只产生稳定的测试
-结果。
-
-真实 DeepSeek 模式只支持：
-
-1. 课程类别、课程难度、购买渠道和主要学习设备的多维对比；
-2. 按月份和课程类别统计报名人数、实付金额和平均完成率趋势。
-
-演示步骤和推荐问题见
-[docs/release/DEMO_GUIDE.md](docs/release/DEMO_GUIDE.md)。
-
-## 目录
+## 项目结构
 
 ```text
 app/
 ├── api/                 # V1 兼容接口
-├── db/                  # V1 ORM、数据库连接与 revision 检查
-├── services/            # V1 Agent、解析、画像和图表能力
-└── v2/
+├── db/                  # V1 ORM 与数据库连接
+├── services/            # V1 Agent、解析、画像与图表
+└── v2/                  # V2 受控分析闭环
     ├── api/             # V2 REST / SSE
     ├── db/              # Run、Step、Artifact、Event
-    ├── domain/          # 领域注册表、Intent 路由与工作流编译
-    ├── schemas/         # API、Intent、Artifact、Event Schema
+    ├── domain/          # 领域注册表、Intent 路由
+    ├── schemas/         # API、Intent、Result、Artifact、Event
     └── services/        # 执行器、分析、图表、Evidence、Provider
 frontend-v2/             # 当前 React 工作台
-frontend/                # 保留的 V1 前端
-alembic/                 # 增量迁移
-tests/                   # V1/V2、迁移、Provider 与端到端测试
-docs/release/            # 架构、部署与演示材料
+demo/                    # 合成演示数据与生成脚本
+tests/                   # 后端与端到端测试
+docs/                    # 架构、部署与 V2 说明
 ```
+
+## 关键设计决策
+
+### 领域契约集中管理
+
+`RealEstateDomainRegistry` 统一定义维度、日期、指标和语义（含单位与派生关系），避免语义散落在多个模块。
+
+### LLM 不直接控制物理字段
+
+Intent 与 Plan 使用逻辑 ID（如 `lead_channel`、`deal_rate`），由 Plan Compiler 映射到实际数据字段，模型无法直接指定物理列名或聚合方式。
+
+### 计算与语言生成分离
+
+pandas 工具负责确定性计算，模型负责理解问题和生成结构化意图，二者通过严格的 Schema 与 Evidence 校验衔接。
+
+### Artifact Contract
+
+前端只渲染 `text`、`metric`、`table`、`chart` 四类 Artifact，前后端通过稳定契约解耦，后端可替换 Provider 而不影响展示。
+
+### Fake Provider
+
+默认使用确定性 Provider，用于稳定测试和 Demo，真实模型路径保持可替换，无需密钥即可验证完整产品链路。
 
 ## 当前限制
 
-- V2 仍使用 V1 `files` 作为过渡期数据集版本标识。
-- Fake Provider 用于链路验证，不代表真实自然语言理解效果。
-- DeepSeek 模式读取有限历史帮助理解追问，但所有数字仍由当前 Run
-  重新计算。
-- 图表为服务端生成的 PNG，不支持交互编辑。
-- 合作式取消无法强制中断已经进入执行的同步 pandas/matplotlib 函数。
-- `frontend/` 仅为 V1 兼容参考，当前产品界面位于 `frontend-v2/`。
+- 月度派生转化率暂不支持（如按月计算成交转化率）。
+- Demo 数据为合成模拟数据，不代表任何真实房地产公司业务数据。
+- 图表当前主要为服务端生成的静态 PNG，不支持交互式编辑。
+- Fake Provider 下自由文本理解能力有限，复杂自然语言分析依赖真实 LLM Provider。
+- 合作式取消无法强制中断已进入执行的同步 pandas/matplotlib 计算。
 
 ## 进一步阅读
 
 - [发布架构](docs/release/ARCHITECTURE.md)
-- [部署与迁移](docs/release/DEPLOYMENT.md)
-- [作品集演示指南](docs/release/DEMO_GUIDE.md)
+- [部署与数据库迁移](docs/release/DEPLOYMENT.md)
+- [房地产 Demo 数据说明](demo/README_REAL_ESTATE.md)
 - [最小 V2 后端说明](docs/v2/MINIMAL_V2_BACKEND.md)
-- [V2 重构边界](docs/v2/V2_REFACTOR_BOUNDARY.md)
-
-## Dataset-aware suggestions and readable charts
-
-- Models may select only a bounded intent and referenced fields from safe
-  uploaded-field metadata. Public card labels and questions are rendered
-  deterministically by the server; `source=model` means model-selected topic,
-  not model-authored copy. Selecting a card fills the analysis input and never
-  starts a Run by itself.
-- High-cardinality group comparisons use server-rendered horizontal Top 10 PNG
-  charts. Monthly charts retain the complete supported month range.
-- Fake mode produces deterministic recommendation templates without any DeepSeek
-  request; real-provider acceptance remains a separately authorized activity.
 
 ## License
 
