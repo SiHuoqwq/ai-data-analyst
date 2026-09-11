@@ -293,7 +293,3 @@ pandas 工具负责确定性计算，模型负责理解问题和生成结构化�
 - [部署与数据库迁移](docs/release/DEPLOYMENT.md)
 - [房地产 Demo 数据说明](demo/README_REAL_ESTATE.md)
 - [最小 V2 后端说明](docs/v2/MINIMAL_V2_BACKEND.md)
-
-## License
-
-MIT
